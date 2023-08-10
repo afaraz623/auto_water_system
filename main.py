@@ -6,7 +6,7 @@ import pandas as pd
 import tabula as tb
 
 # files = ['test1.pdf', 'test2.pdf', 'test4.pdf']
-file = 'test3.pdf'
+file = 'test1.pdf'
 
 timing_data = tb.read_pdf(file, pages='all', area = (60, 325, 918, 770), pandas_options={'header': None}, lattice=True, multiple_tables=True)
 street_data = tb.read_pdf(file, pages='all', area = (58, 270, 918, 310), pandas_options={'header': None}, lattice=True, multiple_tables=True)
@@ -24,13 +24,13 @@ timing_df = timing_df.applymap(lambda lst: [x.replace('pm', 'PM') for x in lst])
 timing_df = timing_df.applymap(lambda lst: [x.replace('am', 'AM') for x in lst])
 timing_df = timing_df.explode(0).explode(1).explode(2)
 
-temp1 = []
+temp = []
 for strt_num in street_df[0]:
     strt_num = re.sub(r'(^[\s,]+|[\s,]+$)|(\s*,\s*)', '', strt_num).strip()   
     for i in strt_num.split('\r'):
-        temp1.append(i)
+        temp.append(i)
 
-street_df = pd.DataFrame(temp1)
+street_df = pd.DataFrame(temp)
 
 period_df.drop(1, axis=1, inplace=True)
 period_df = period_df.astype(str)
@@ -66,6 +66,7 @@ def check_date(date, index):
     if isinstance(date, str):
         if date in ['', 'nan']:
             return date
+        
         elif re.match(r'^\d{2};[a-zA-Z]+;\d{4}$', date):
             valid_date_indices.append(index)
             
@@ -80,26 +81,36 @@ def check_date(date, index):
                 else:
                     temp.append(part)
             return '-'.join(temp)
+        
         else:
             return 'marker'
 
 for i in range(len(combined_df)):
     combined_df.loc[i, 'Date'] = check_date(combined_df.loc[i, 'Date'], i)
 
-prev_idx = None
-for i in range(1, len(combined_df)):    
-    if combined_df.loc[i, 'Date'] == 'marker':
-        for x in valid_date_indices:
-            if x < i:
-                prev_idx = x
-        
-        prev_date = datetime.strptime(combined_df.loc[prev_idx , 'Date'], '%d-%m-%Y')
-        next_date = prev_date + timedelta(days=1)
-        
-        if next_date.month != prev_date.month:
-            next_date = prev_date.replace(day=1) + timedelta(days=1)
-        
-        combined_df.loc[i, 'Date'] = next_date.strftime('%d-%m-%Y')
+def adjust_date(i):
+        if x > i:
+            idx = x
+            next_date = datetime.strptime(combined_df.loc[idx, 'Date'], '%d-%m-%Y')
+            prev_date = next_date - timedelta(days=1)
+            
+            return prev_date
+
+        if x < i:
+            idx = x
+            prev_date = datetime.strptime(combined_df.loc[idx, 'Date'], '%d-%m-%Y')
+            next_date = prev_date + timedelta(days=1)
+
+            return next_date
+idx = None
+first_date_row = 1
+for i in range(first_date_row, len(combined_df)):    
+    for x in valid_date_indices:    
+        if combined_df.loc[i, 'Date'] == 'marker':
+            if i == first_date_row:
+                combined_df.loc[i, 'Date'] = adjust_date(i).strftime('%d-%m-%Y')
+            else:
+                combined_df.loc[i, 'Date'] = adjust_date(i).strftime('%d-%m-%Y')
 
 # verifying data
 valid_strts = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15']
@@ -137,6 +148,9 @@ for i in range(len(combined_df)):
             date += timedelta(days=1)
             incre_date = True
         combined_df.loc[i, 'Date'] = date.strftime('%d-%m-%Y')
+
+combined_df.drop(0, axis=0, inplace=True)
+combined_df.reset_index(drop=True, inplace=True)
 
 print(combined_df.head(50))
 
