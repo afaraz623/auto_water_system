@@ -5,7 +5,7 @@ import pandas as pd
 import re
 
 
-date_unformatted = {'Date' : ['31;Augest;2023', '01;September;2023', '02;Smber;2023']}
+date_unformatted = {'Date' : ['01;September;2023', '02;Sebtember;2023', '02;September;2023']}
 
 combined_df = pd.DataFrame(date_unformatted)
 
@@ -38,8 +38,6 @@ def check_date(date, index):
 for i in range(len(combined_df)):
     combined_df.loc[i, 'Date'] = check_date(combined_df.loc[i, 'Date'], i)
 
-print(combined_df)
-
 def adjust_date(i):
         if x > i:
             idx = x
@@ -62,5 +60,24 @@ for i in range(len(combined_df)):
                 combined_df.loc[i, 'Date'] = adjust_date(i).strftime('%d-%m-%Y')
             else:
                 combined_df.loc[i, 'Date'] = adjust_date(i).strftime('%d-%m-%Y')
+
+def check_date_increment(df): 
+    prev_date = datetime.strptime(df.loc[0, 'Date'], '%d-%m-%Y')
+
+    for i in range(1, len(combined_df)):
+        current_date = datetime.strptime(df.loc[i, 'Date'], '%d-%m-%Y')
+
+        dif = current_date - prev_date
+
+        if dif == timedelta(days=0):
+            print('yay')
+            continue
+        
+        if dif != timedelta(days=1):
+            print("Dates in the column are not incremental by one.")
+
+        prev_date = current_date
+
+check_date_increment(combined_df)
 
 print(combined_df)
