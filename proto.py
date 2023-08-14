@@ -5,7 +5,7 @@ import pandas as pd
 import re
 
 data = { 'On Time' :  ['12:00:AM', '12:00:PM', '7:00:PM', '1:00:AM', '5:00:AM', '11:00:PM', '10:30:AM'],
-         'Off Time' : ['3:00:AM', '3:00:PM', '10:00:PM', '4:00:AM', '9:00:AM', '2:00:AM', '2:30:PM'] }
+         'Off Time' : ['3:00:AM', '3:00:PM', '10:00:PM', '4:00:AM', '9:00:AM', '2:00:AM', '2:00:PM'] }
 
 df = pd.DataFrame(data)
 

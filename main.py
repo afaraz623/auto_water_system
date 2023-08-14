@@ -2,11 +2,12 @@ from datetime import datetime, timedelta
 import Levenshtein as lev
 import pandas as pd
 import tabula as tb
+import numpy
 import os
 import re
 
 # files = ['test1.pdf', 'test2.pdf', 'test4.pdf']
-file = 'test1.pdf'
+file = 'test4.pdf'
 
 timing_data = tb.read_pdf(file, pages='all', area = (60, 325, 918, 770), pandas_options={'header': None}, lattice=True, multiple_tables=True)
 street_data = tb.read_pdf(file, pages='all', area = (58, 270, 918, 310), pandas_options={'header': None}, lattice=True, multiple_tables=True)
@@ -222,9 +223,14 @@ for i in range(FIRST_REAL_ROW, len(combined_df)):
 combined_df.drop(0, axis=0, inplace=True)
 combined_df.reset_index(drop=True, inplace= True)
 
-print(combined_df.head(50))
+####################################[Filtering Data]#################################### 
+# filtering only useful data
+filter_target = combined_df['Street'] == '5'
+filter_cols = ['Date', 'On Time', 'Duration']
+filtered_df = combined_df[filter_target][filter_cols].copy().reset_index(drop=True)
 
-file = file.replace('.pdf', '.csv')
-combined_df.to_csv(file, encoding='utf-8-sig')
+print(filtered_df)
+
+filtered_df.to_csv('result.csv', encoding='utf-8-sig')
 
 
