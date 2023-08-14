@@ -4,80 +4,34 @@ import calendar
 import pandas as pd
 import re
 
+data = { 'Timing' : ['12:00:AM', '12:00:PM', '7:00:PM', '1:00:AM', '5:00:AM', '11:00:PM', '10:30:AM'] }
 
-date_unformatted = {'Date' : ['01;September;2023', '02;Sebtember;2023', '02;September;2023']}
+df = pd.DataFrame(data)
 
-combined_df = pd.DataFrame(date_unformatted)
+def convert_time(time):
+    temp = []
+    temp = time.split(':')
 
-# spell correction and formating the date column
-months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
-valid_date_indices = []
+    if temp[0] == '12':
+        if temp[2] == 'AM':
+            temp[0] = '00'
+        temp[2] = '00'
+    
+    elif len(temp[0]) == 1:
+        if temp[2] == 'PM':
+            temp[0] = str(int(temp[0]) + 12)
+        else:
+            temp[0] = '0' + temp[0]
+        temp[2] = '00'
 
-def check_date(date, index):
-    if isinstance(date, str):
-        if date in ['', 'nan']:
-            return date
+    if temp[2] == 'PM':
+        temp[0] = str(int(temp[0]) + 12)
         
-        elif re.match(r'^\d{2};[a-zA-Z]+;\d{4}$', date):
-            valid_date_indices.append(index)
-            
-            split_date = date.split(';')
-            corrected_month = min(months, key=lambda x: lev.distance(x.lower(), split_date[1].lower()))
-            corrected_month = datetime.strptime(corrected_month, '%B')
+    temp[2] = '00'
+    
+    return ':'.join(temp)
 
-            temp = []
-            for part in split_date:
-                if part == split_date[1]:
-                    temp.append(corrected_month.strftime('%m'))
-                else:
-                    temp.append(part)
-            return '-'.join(temp)
-        
-        return 'marker'
+for i in range(len(df)):
+    df.loc[i, 'Timing'] = convert_time(df.loc[i, 'Timing'])
 
-for i in range(len(combined_df)):
-    combined_df.loc[i, 'Date'] = check_date(combined_df.loc[i, 'Date'], i)
-
-def adjust_date(i):
-        if x > i:
-            idx = x
-            next_date = datetime.strptime(combined_df.loc[idx, 'Date'], '%d-%m-%Y')
-            prev_date = next_date - timedelta(days=1)
-            
-            return prev_date
-
-        if x < i:
-            idx = x
-            prev_date = datetime.strptime(combined_df.loc[idx, 'Date'], '%d-%m-%Y')
-            next_date = prev_date + timedelta(days=1)
-
-            return next_date
-idx = None
-for i in range(len(combined_df)):    
-    for x in valid_date_indices:    
-        if combined_df.loc[i, 'Date'] == 'marker':
-            if i == 0:
-                combined_df.loc[i, 'Date'] = adjust_date(i).strftime('%d-%m-%Y')
-            else:
-                combined_df.loc[i, 'Date'] = adjust_date(i).strftime('%d-%m-%Y')
-
-def check_date_increment(df): 
-    prev_date = datetime.strptime(df.loc[0, 'Date'], '%d-%m-%Y')
-
-    for i in range(1, len(combined_df)):
-        current_date = datetime.strptime(df.loc[i, 'Date'], '%d-%m-%Y')
-
-        dif = current_date - prev_date
-
-        if dif == timedelta(days=0):
-            print('yay')
-            continue
-        
-        if dif != timedelta(days=1):
-            print("Dates in the column are not incremental by one.")
-
-        prev_date = current_date
-
-check_date_increment(combined_df)
-
-print(combined_df)
+print(df)

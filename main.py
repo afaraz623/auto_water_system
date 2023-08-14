@@ -1,9 +1,9 @@
-import os
-import re
 from datetime import datetime, timedelta
 import Levenshtein as lev
 import pandas as pd
 import tabula as tb
+import os
+import re
 
 # files = ['test1.pdf', 'test2.pdf', 'test4.pdf']
 file = 'test4.pdf'
@@ -22,6 +22,7 @@ timing_df = timing_df.applymap(lambda x: re.sub(r'(^[\s,]+|[\s,]+$)|(\s*,\s*)|ho
 timing_df = timing_df.applymap(lambda lst: [x.replace(';', ':') for x in lst])
 timing_df = timing_df.applymap(lambda lst: [x.replace('pm', 'PM') for x in lst])
 timing_df = timing_df.applymap(lambda lst: [x.replace('am', 'AM') for x in lst])
+timing_df = timing_df.applymap(lambda lst: [x.replace(' ', ':') for x in lst])
 timing_df = timing_df.explode(0).explode(1).explode(2)
 
 temp = []
@@ -39,13 +40,9 @@ period_df = period_df.applymap(lambda x: re.sub(r'^[^\d]*(?=\d)', '', x))
 period_df = period_df.applymap(lambda x: re.sub(r'(\d{2})([a-zA-Z]+)(\d{4})', r'\1;\2;\3', x))
 
 # renaming columns and combining dataframes
-timing_col = { 0 : 'On Time', 1 : 'Off Time', 2 : 'Duration' }
-street_col = { 0 : 'Street' }
-period_col = { 0 : 'Date'}
-
-timing_df.rename(columns=timing_col, inplace=True)
-street_df.rename(columns=street_col, inplace=True)
-period_df.rename(columns=period_col, inplace=True)
+timing_df.rename(columns={0 : 'On Time', 1 : 'Off Time', 2 : 'Duration'}, inplace=True)
+street_df.rename(columns={0 : 'Street'}, inplace=True)
+period_df.rename(columns={0 : 'Date'}, inplace=True)
 
 combined_df = pd.concat([period_df, street_df, timing_df], axis=1)
 
@@ -59,8 +56,8 @@ combined_df = combined_df[~combined_df['Duration'].str.contains('Duration', case
 combined_df.reset_index(drop=True, inplace=True)
 
 # spell correction and formating the date column
-months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
-valid_date_indices = []
+MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
+valid_dates = []
 
 def check_date(date, index):
     if isinstance(date, str):
@@ -68,10 +65,10 @@ def check_date(date, index):
             return date
         
         elif re.match(r'^\d{2};[a-zA-Z]+;\d{4}$', date):
-            valid_date_indices.append(index)
+            valid_dates.append(index)
             
             split_date = date.split(';')
-            corrected_month = min(months, key=lambda x: lev.distance(x.lower(), split_date[1].lower()))
+            corrected_month = min(MONTHS, key=lambda x: lev.distance(x.lower(), split_date[1].lower()))
             corrected_month = datetime.strptime(corrected_month, '%B')
 
             temp = []
@@ -102,24 +99,53 @@ def adjust_date(i):
             next_date = prev_date + timedelta(days=1)
 
             return next_date
+
 idx = None
-first_date_row = 1
-for i in range(first_date_row, len(combined_df)):    
-    for x in valid_date_indices:    
+FIRST_REAL_ROW = 1
+for i in range(FIRST_REAL_ROW, len(combined_df)):    
+    for x in valid_dates:    
         if combined_df.loc[i, 'Date'] == 'marker':
-            if i == first_date_row:
+            if i == FIRST_REAL_ROW:
                 combined_df.loc[i, 'Date'] = adjust_date(i).strftime('%d-%m-%Y')
             else:
                 combined_df.loc[i, 'Date'] = adjust_date(i).strftime('%d-%m-%Y')
 
+# formating On and Off columns into 24hrs
+def convert_time(time):
+    temp = []
+    temp = time.split(':')
+
+    if temp[0] == '12':
+        if temp[2] == 'AM':
+            temp[0] = '00'
+        temp[2] = '00'
+    
+    elif len(temp[0]) == 1:
+        if temp[2] == 'PM':
+            temp[0] = str(int(temp[0]) + 12)
+        else:
+            temp[0] = '0' + temp[0]
+        temp[2] = '00'
+
+    if temp[2] == 'PM':
+        temp[0] = str(int(temp[0]) + 12)
+    
+    temp[2] = '00'
+    
+    return ':'.join(temp)
+
+for x in ['On Time', 'Off Time']:
+    for i in range(FIRST_REAL_ROW, len(combined_df)):
+        combined_df.loc[i, x] = convert_time(combined_df.loc[i, x])
+
 # Verifying data
 # checking streets
-valid_strts = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15']
+VALID_STRTS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15']
 verified_strts = 0
 street_passed = False
 
 for strt in combined_df['Street']:
-    if strt in valid_strts:
+    if strt in VALID_STRTS:
         verified_strts += 1
 
 if verified_strts == len(combined_df['Street']) - 1: # not counting the 'nan' value in first row
@@ -129,8 +155,8 @@ if not street_passed:
     raise ValueError('Street elements do not match predefined street numbers')
 
 # spliting the valid_strts list into two parts for 'Date' column varification
-group_one = valid_strts[:7]
-group_two = valid_strts[7:]
+group_one = VALID_STRTS[:7]
+group_two = VALID_STRTS[7:]
 
 # matching street numbers with designated dates and extending the dates to their respective rows
 date = datetime.strptime(combined_df.loc[1, 'Date'], '%d-%m-%Y') 
@@ -152,11 +178,12 @@ for i in range(len(combined_df)):
         combined_df.loc[i, 'Date'] = date.strftime('%d-%m-%Y')
 
 # checking dates
-prev_date = datetime.strptime(combined_df.loc[1, 'Date'], '%d-%m-%Y')
+# using the bigger date minus smaller date to measure diff of 1
+prev_date = datetime.strptime(combined_df.loc[FIRST_REAL_ROW, 'Date'], '%d-%m-%Y')
+SECOND_ROW = 2
 
-for i in range(2, len(combined_df)):
+for i in range(SECOND_ROW, len(combined_df)):
     curr_date = datetime.strptime(combined_df.loc[i, 'Date'], '%d-%m-%Y')
-    print(curr_date)
     diff = curr_date - prev_date
 
     if diff == timedelta(days=0):
@@ -165,7 +192,6 @@ for i in range(2, len(combined_df)):
     if diff != timedelta(days=1):
         raise ValueError('Dates are not incremental by one.')
     
-    print(prev_date)
     prev_date = curr_date
 
 # checking timing
