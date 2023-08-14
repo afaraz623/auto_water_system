@@ -6,7 +6,7 @@ import os
 import re
 
 # files = ['test1.pdf', 'test2.pdf', 'test4.pdf']
-file = 'test4.pdf'
+file = 'test1.pdf'
 
 timing_data = tb.read_pdf(file, pages='all', area = (60, 325, 918, 770), pandas_options={'header': None}, lattice=True, multiple_tables=True)
 street_data = tb.read_pdf(file, pages='all', area = (58, 270, 918, 310), pandas_options={'header': None}, lattice=True, multiple_tables=True)
@@ -196,7 +196,28 @@ for i in range(SECOND_ROW, len(combined_df)):
     prev_date = curr_date
 
 # checking timing
+time_format = '%Y-%m-%d %H:%M:%S'
+default_date = '1970-01-01'  # just for time calculation
 
+for i in range(FIRST_REAL_ROW, len(combined_df)):
+    duration = float(combined_df.loc[i, 'Duration'])
+
+    time_on = datetime.strptime(default_date + ' ' + combined_df.loc[i, 'On Time'], time_format)
+    time_off = datetime.strptime(default_date + ' ' + combined_df.loc[i, 'Off Time'], time_format)
+
+    if time_off < time_on:
+        time_off += timedelta(days=1)
+
+    diff = time_off - time_on
+
+    diff_seconds = diff.total_seconds()
+    diff_hours = diff_seconds / 3600
+
+    if duration - diff_hours != 0:
+        try:
+            combined_df.loc[i, 'Duration'] = re.sub(r'.0', '', str(diff_hours))
+        except:
+            print(f'Timing do not match duration values. idx: {i-1}')
 
 combined_df.drop(0, axis=0, inplace=True)
 combined_df.reset_index(drop=True, inplace= True)
