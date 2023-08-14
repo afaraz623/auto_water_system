@@ -16,12 +16,13 @@ timing_df = pd.concat(timing_data, ignore_index=True)
 street_df = pd.concat(street_data, ignore_index=True)
 period_df = pd.concat(period_data, ignore_index=True)
 
-# Cleaning data 
+####################################[Cleaning Data]#################################### 
 timing_df = timing_df.astype(str)
 timing_df = timing_df.applymap(lambda x: re.sub(r'(^[\s,]+|[\s,]+$)|(\s*,\s*)|hours|hour', '', x).strip().split('\r'))
 timing_df = timing_df.applymap(lambda lst: [x.replace(';', ':') for x in lst])
 timing_df = timing_df.applymap(lambda lst: [x.replace('pm', 'PM') for x in lst])
 timing_df = timing_df.applymap(lambda lst: [x.replace('am', 'AM') for x in lst])
+
 timing_df = timing_df.applymap(lambda lst: [x.replace(' ', ':') for x in lst])
 timing_df = timing_df.explode(0).explode(1).explode(2)
 
@@ -138,7 +139,7 @@ for x in ['On Time', 'Off Time']:
     for i in range(FIRST_REAL_ROW, len(combined_df)):
         combined_df.loc[i, x] = convert_time(combined_df.loc[i, x])
 
-# Verifying data
+####################################[Verifying Data]#################################### 
 # checking streets
 VALID_STRTS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15']
 verified_strts = 0
@@ -155,8 +156,8 @@ if not street_passed:
     raise ValueError('Street elements do not match predefined street numbers')
 
 # spliting the valid_strts list into two parts for 'Date' column varification
-group_one = VALID_STRTS[:7]
-group_two = VALID_STRTS[7:]
+GROUP_ONE = VALID_STRTS[:7]
+GROUP_TWO = VALID_STRTS[7:]
 
 # matching street numbers with designated dates and extending the dates to their respective rows
 date = datetime.strptime(combined_df.loc[1, 'Date'], '%d-%m-%Y') 
@@ -165,13 +166,13 @@ incre_date = False
 for i in range(len(combined_df)):
     street_number = combined_df['Street'].iloc[i]
 
-    if street_number in group_one:
+    if street_number in GROUP_ONE:
         if incre_date:
             date += timedelta(days=1)
             incre_date = False
         combined_df.loc[i, 'Date'] = date.strftime('%d-%m-%Y')
 
-    elif street_number in group_two:
+    elif street_number in GROUP_TWO:
         if not incre_date:
             date += timedelta(days=1)
             incre_date = True
