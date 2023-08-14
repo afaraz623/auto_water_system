@@ -7,7 +7,7 @@ import os
 import re
 
 # files = ['test1.pdf', 'test2.pdf', 'test4.pdf']
-file = 'test4.pdf'
+file = 'samples/test4.pdf'
 
 timing_data = tb.read_pdf(file, pages='all', area = (60, 325, 918, 770), pandas_options={'header': None}, lattice=True, multiple_tables=True)
 street_data = tb.read_pdf(file, pages='all', area = (58, 270, 918, 310), pandas_options={'header': None}, lattice=True, multiple_tables=True)
