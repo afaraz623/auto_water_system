@@ -3,6 +3,8 @@ import pandas as pd
 import tabula as tb
 import Levenshtein as lev
 from datetime import datetime, timedelta
+import time
+import os
 
 
 def unscramble_data(t_df, s_df, p_df):
@@ -101,11 +103,24 @@ def convert_time_24(time):
     return ':'.join(temp)
 
 def main():
-    file = 'samples/test4.pdf'
+    FOLDER_PATH = 'downloaded'
+    file_name = None
 
-    timing_df = pd.concat(tb.read_pdf(file, pages='all', area = (60, 325, 918, 770), pandas_options={'header': None}, lattice=True, multiple_tables=True), ignore_index=True)
-    street_df = pd.concat(tb.read_pdf(file, pages='all', area = (58, 270, 918, 310), pandas_options={'header': None}, lattice=True, multiple_tables=True), ignore_index=True)
-    period_df = pd.concat(tb.read_pdf(file, pages='all', area = (60, 150, 918, 250), pandas_options={'header': None}, lattice=True, multiple_tables=True), ignore_index=True)
+    while not any(filename.lower().endswith('.pdf') for filename in os.listdir(FOLDER_PATH)):
+        time.sleep(10) # refreshing every 10 seconds.
+    
+    for filename in os.listdir(FOLDER_PATH):
+        if filename.lower().endswith('.pdf'):
+            file_name = filename
+            break
+
+    if file_name:
+        joined_path = os.path.join(FOLDER_PATH, f'{file_name}') 
+        print(f'{file_name} Downloaded!')
+
+    timing_df = pd.concat(tb.read_pdf(joined_path, pages='all', area = (60, 325, 918, 770), pandas_options={'header': None}, lattice=True, multiple_tables=True), ignore_index=True)
+    street_df = pd.concat(tb.read_pdf(joined_path, pages='all', area = (58, 270, 918, 310), pandas_options={'header': None}, lattice=True, multiple_tables=True), ignore_index=True)
+    period_df = pd.concat(tb.read_pdf(joined_path, pages='all', area = (60, 150, 918, 250), pandas_options={'header': None}, lattice=True, multiple_tables=True), ignore_index=True)
 
 #**********************************[Cleaning Data]**********************************#
     cleaned_df_list = unscramble_data(timing_df, street_df, period_df)
@@ -223,5 +238,9 @@ def main():
 
     filtered_df.to_csv('result.csv', encoding='utf-8-sig')
 
+    os.remove(joined_path)
+    print(f'{file_name} deleted!')
+
 if __name__ == '__main__':
-    main()
+    while True:
+        main()
