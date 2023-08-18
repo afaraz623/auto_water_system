@@ -1,10 +1,10 @@
 import re
+import os
+import time
 import pandas as pd
 import tabula as tb
 import Levenshtein as lev
 from datetime import datetime, timedelta
-import time
-import os
 
 
 def unscramble_data(t_df, s_df, p_df):
@@ -106,46 +106,57 @@ def main():
     FOLDER_PATH = 'downloaded'
     file_name = None
 
-    while not any(filename.lower().endswith('.pdf') for filename in os.listdir(FOLDER_PATH)):
-        time.sleep(10) # refreshing every 10 seconds.
-    
-    for filename in os.listdir(FOLDER_PATH):
-        if filename.lower().endswith('.pdf'):
-            file_name = filename
-            break
+    while True:
+        try: 
+            while not any(filename.lower().endswith('.pdf') for filename in os.listdir(FOLDER_PATH)):
+                time.sleep(10) # refreshing every 10 seconds.
+            
+            for filename in os.listdir(FOLDER_PATH):
+                if filename.lower().endswith('.pdf'):
+                    file_name = filename
+                    break
 
-    if file_name:
-        joined_path = os.path.join(FOLDER_PATH, f'{file_name}') 
-        print(f'{file_name} Downloaded!')
-
-    timing_df = pd.concat(tb.read_pdf(joined_path, pages='all', area = (60, 325, 918, 770), pandas_options={'header': None}, lattice=True, multiple_tables=True), ignore_index=True)
-    street_df = pd.concat(tb.read_pdf(joined_path, pages='all', area = (58, 270, 918, 310), pandas_options={'header': None}, lattice=True, multiple_tables=True), ignore_index=True)
-    period_df = pd.concat(tb.read_pdf(joined_path, pages='all', area = (60, 150, 918, 250), pandas_options={'header': None}, lattice=True, multiple_tables=True), ignore_index=True)
+            if file_name:
+                joined_path = os.path.join(FOLDER_PATH, f'{file_name}') 
+                print(f'{file_name} Downloaded!')  
+            
+            timing_df = pd.concat(tb.read_pdf(joined_path, pages='all', area = (60, 325, 918, 770), pandas_options={'header': None}, lattice=True, multiple_tables=True), ignore_index=True)
+            street_df = pd.concat(tb.read_pdf(joined_path, pages='all', area = (58, 270, 918, 310), pandas_options={'header': None}, lattice=True, multiple_tables=True), ignore_index=True)
+            period_df = pd.concat(tb.read_pdf(joined_path, pages='all', area = (60, 150, 918, 250), pandas_options={'header': None}, lattice=True, multiple_tables=True), ignore_index=True)
 
 #**********************************[Cleaning Data]**********************************#
-    cleaned_df_list = unscramble_data(timing_df, street_df, period_df)
-    
-    combined_df = pd.concat(cleaned_df_list, axis=1)
+            cleaned_df_list = unscramble_data(timing_df, street_df, period_df)
+            
+            combined_df = pd.concat(cleaned_df_list, axis=1)
 
-    combined_df.iloc[0] = 'nan' # added temporarily to make indices match pdf's
-    
-    COL_NAMES = ['Date', 'Street', 'On Time', 'Off Time', 'Duration']
-    for col in COL_NAMES: # removing extra column names without attacfing index
-        combined_df = combined_df[~combined_df[col].str.contains(col, case=False, na=False)]
-    combined_df.reset_index(drop=True, inplace=True)
+            combined_df.iloc[0] = 'nan' # added temporarily to make indices match pdf's
+            
+            COL_NAMES = ['Date', 'Street', 'On Time', 'Off Time', 'Duration']
+            for col in COL_NAMES: # removing extra column names without attacfing index
+                combined_df = combined_df[~combined_df[col].str.contains(col, case=False, na=False)]
+            combined_df.reset_index(drop=True, inplace=True)
 
-    verified_dates = []
-    for row in range(len(combined_df)):
-        combined_df.loc[row, 'Date'] = check_date(combined_df.loc[row, 'Date'], row, verified_dates)
+            verified_dates = []
+            for row in range(len(combined_df)):
+                combined_df.loc[row, 'Date'] = check_date(combined_df.loc[row, 'Date'], row, verified_dates)
 
-    FIRST_REAL_ROW = 1
-    for row in range(FIRST_REAL_ROW, len(combined_df)):       
-            if combined_df.loc[row, 'Date'] == 'marker':
-                combined_df.loc[row, 'Date'] = fix_date(combined_df, row, verified_dates).strftime('%d-%m-%Y')
+            FIRST_REAL_ROW = 1
+            for row in range(FIRST_REAL_ROW, len(combined_df)):       
+                    if combined_df.loc[row, 'Date'] == 'marker':
+                        combined_df.loc[row, 'Date'] = fix_date(combined_df, row, verified_dates).strftime('%d-%m-%Y')
 
-    for col in ['On Time', 'Off Time']:
-        for row in range(FIRST_REAL_ROW, len(combined_df)):
-            combined_df.loc[row, col] = convert_time_24(combined_df.loc[row, col])
+            for col in ['On Time', 'Off Time']:
+                for row in range(FIRST_REAL_ROW, len(combined_df)):
+                    combined_df.loc[row, col] = convert_time_24(combined_df.loc[row, col])
+            break
+        
+        except Exception as e:
+            print(f"Error Cause: {e}")
+            
+            os.remove(joined_path)
+            print(f'{file_name} deleted!')
+
+            continue
 
 #**********************************[Verifying Data]**********************************#
     # checking streets
