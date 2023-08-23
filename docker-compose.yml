@@ -1,0 +1,21 @@
+version: '3'
+services:
+  discord_bot:
+    container_name: discord_bot
+    build:
+      context: ./discord_bot
+    volumes:
+      - input-volume:/usr/app/downloaded
+      - output-volume:/usr/app/output
+
+  parser:
+    container_name: parser
+    build:
+      context: ./parser
+    volumes:
+      - input-volume:/usr/app/downloaded
+      - output-volume:/usr/app/output
+
+volumes:
+  input-volume:
+  output-volume:
