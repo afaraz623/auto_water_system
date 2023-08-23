@@ -10,6 +10,20 @@ import tabula as tb
 import colorlog
 
 
+# constants
+ATTACHMENT_PATH = 'downloaded'
+RESULT_PATH = 'output'
+RESULT_FILE_NAME = 'result'
+FIRST_REAL_ROW = 1
+SECOND_ROW = 2
+COL_NAMES = ['Date', 'Street', 'On Time', 'Off Time', 'Duration']
+VALID_STRTS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15']
+MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
+
+# spliting the valid_strts list into two parts for 'Date' column varification
+GROUP_ONE = VALID_STRTS[:7] 
+GROUP_TWO = VALID_STRTS[7:]
+
 def unscramble_data(t_df, s_df, p_df):
     t_df = t_df.astype(str)
     t_df = t_df.applymap(lambda x: re.sub(r'(^[\s,]+|[\s,]+$)|(\s*,\s*)|hours|hour', '', x).strip().split('\r'))
@@ -41,8 +55,6 @@ def unscramble_data(t_df, s_df, p_df):
     return [p_df, s_df, t_df]
 
 def check_date(date, index, v_dates):
-    MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
-    
     if isinstance(date, str):
         if date in ['', 'nan']:
             return date
@@ -74,7 +86,7 @@ def fix_date(df, row, v_dates):
         return prev_date
 
     else:
-        temp_lst = sorted(v_dates + [row]) # the clever fucking way
+        temp_lst = sorted(v_dates + [row]) # the fucking clever way
         idx = temp_lst.index(row)
         
         prev_date = datetime.strptime(df.loc[temp_lst[idx - 1], 'Date'], '%d-%m-%Y')
@@ -129,17 +141,16 @@ def main():
 
     logging.info("parser started!")
 
-    ATTACHMENT_PATH = 'downloaded'
-    RESULT_PATH = 'output'
-    file_name = None
-
     if not os.path.exists(ATTACHMENT_PATH):
         os.makedirs(ATTACHMENT_PATH)
 
+    if not os.path.exists(RESULT_PATH):
+        os.makedirs(RESULT_PATH)
+    
     while True: # main loop
-        
         while True:
             try: 
+                file_name = None
                 while not any(filename.lower().endswith('.pdf') for filename in os.listdir(ATTACHMENT_PATH)):
                     time.sleep(10) # refreshing every 60 seconds. 10 for debugging
                 
@@ -164,7 +175,6 @@ def main():
 
                 combined_df.iloc[0] = 'nan' # added temporarily to make indices match pdf's
                 
-                COL_NAMES = ['Date', 'Street', 'On Time', 'Off Time', 'Duration']
                 for col in COL_NAMES: # removing extra column names without attacfing index
                     combined_df = combined_df[~combined_df[col].str.contains(col, case=False, na=False)]
                 combined_df.reset_index(drop=True, inplace=True)
@@ -173,7 +183,6 @@ def main():
                 for row in range(len(combined_df)):
                     combined_df.loc[row, 'Date'] = check_date(combined_df.loc[row, 'Date'], row, verified_dates)
 
-                FIRST_REAL_ROW = 1
                 for row in range(FIRST_REAL_ROW, len(combined_df)):       
                         if combined_df.loc[row, 'Date'] == 'marker':
                             combined_df.loc[row, 'Date'] = fix_date(combined_df, row, verified_dates).strftime('%d-%m-%Y')
@@ -193,7 +202,6 @@ def main():
 
 #**********************************************[Verifying Data]**********************************************#
         # checking streets
-        VALID_STRTS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15']
         verified_strts = 0
         street_passed = False
 
@@ -206,10 +214,6 @@ def main():
 
         if not street_passed:
             logging.critical('Street elements do not match predefined street numbers')
-
-        # spliting the valid_strts list into two parts for 'Date' column varification
-        GROUP_ONE = VALID_STRTS[:7]
-        GROUP_TWO = VALID_STRTS[7:]
 
         # matching street numbers with designated dates and extending the dates to their respective rows
         date = datetime.strptime(combined_df.loc[1, 'Date'], '%d-%m-%Y') 
@@ -232,7 +236,6 @@ def main():
         
         # checking dates
         prev_date = datetime.strptime(combined_df.loc[FIRST_REAL_ROW, 'Date'], '%d-%m-%Y')
-        SECOND_ROW = 2
         for i in range(SECOND_ROW, len(combined_df)):
             curr_date = datetime.strptime(combined_df.loc[i, 'Date'], '%d-%m-%Y')
             diff = curr_date - prev_date # using the bigger date minus smaller date to measure diff of 1
@@ -279,11 +282,10 @@ def main():
         filter_cols = ['Date', 'On Time', 'Duration']
         filtered_df = combined_df[filter_target][filter_cols].copy().reset_index(drop=True)
 
-        if not os.path.exists(RESULT_PATH):
-            os.makedirs(RESULT_PATH)
+        output_csv_path = RESULT_PATH + '/' + RESULT_FILE_NAME + '.csv'
 
-        logging.info('result.csv created')
-        filtered_df.to_csv('output/result.csv', encoding='utf-8')
+        logging.info(output_csv_path)
+        filtered_df.to_csv(output_csv_path, encoding='utf-8')
 
         os.remove(joined_path)
         logging.info(f'{file_name} deleted')
