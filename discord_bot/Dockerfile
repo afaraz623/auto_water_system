@@ -5,9 +5,10 @@ WORKDIR /usr/app
 
 COPY main.py ./
 COPY secrets.json ./
+COPY requirements.txt ./
 
 RUN apt-get update
 
-RUN pip3 install tabula-py pandas discord.py tabulate
+RUN pip3 install -r requirements.txt
 
 CMD ["python", "main.py"]

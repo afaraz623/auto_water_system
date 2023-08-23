@@ -141,7 +141,7 @@ def main():
         while True:
             try: 
                 while not any(filename.lower().endswith('.pdf') for filename in os.listdir(ATTACHMENT_PATH)):
-                    time.sleep(10) # refreshing every 10 seconds.
+                    time.sleep(10) # refreshing every 60 seconds. 10 for debugging
                 
                 for filename in os.listdir(ATTACHMENT_PATH):
                     if filename.lower().endswith('.pdf'):
@@ -156,7 +156,8 @@ def main():
                 street_df = pd.concat(tb.read_pdf(joined_path, pages='all', area = (58, 270, 918, 310), pandas_options={'header': None}, lattice=True, multiple_tables=True), ignore_index=True)
                 period_df = pd.concat(tb.read_pdf(joined_path, pages='all', area = (60, 150, 918, 250), pandas_options={'header': None}, lattice=True, multiple_tables=True), ignore_index=True)
 
-    #**********************************[Cleaning Data]**********************************#
+#**********************************************[Cleaning Data]**********************************************#
+
                 cleaned_df_list = unscramble_data(timing_df, street_df, period_df)
                 
                 combined_df = pd.concat(cleaned_df_list, axis=1)
@@ -190,7 +191,7 @@ def main():
 
                 continue
 
-    #**********************************[Verifying Data]**********************************#
+#**********************************************[Verifying Data]**********************************************#
         # checking streets
         VALID_STRTS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15']
         verified_strts = 0
@@ -272,7 +273,8 @@ def main():
         combined_df.drop(0, axis=0, inplace=True)
         combined_df.reset_index(drop=True, inplace= True)
         
-    #**********************************[Filtering Data]**********************************#
+#**********************************************[Filtering Data]**********************************************#
+
         filter_target = combined_df['Street'] == '5' # filtering useful data only
         filter_cols = ['Date', 'On Time', 'Duration']
         filtered_df = combined_df[filter_target][filter_cols].copy().reset_index(drop=True)

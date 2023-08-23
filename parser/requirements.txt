@@ -1,0 +1,4 @@
+tabula-py==2.7.0
+pandas==2.0.3
+levenshtein==0.21.1
+colorlog==6.7.0
