@@ -11,9 +11,10 @@ import colorlog
 
 
 # constants
-ATTACHMENT_PATH = 'downloaded'
-RESULT_PATH = 'output'
-RESULT_FILE_NAME = 'result'
+ATTACHMENT_PATH = 'attachments'
+OUTPUT_PATH = 'output_results'
+OUTPUT_FILE_NAME = 'parsed_data'
+
 FIRST_REAL_ROW = 1
 SECOND_ROW = 2
 COL_NAMES = ['Date', 'Street', 'On Time', 'Off Time', 'Duration']
@@ -129,8 +130,9 @@ def main():
         datefmt='%Y-%m-%d %H:%M:%S',
         log_colors={
             'INFO': 'blue',   
-            'ERROR': 'yellow', 
-            'CRITICAL': 'red',   
+            'WARNING': 'yellow',
+            'ERROR': 'red', 
+            'CRITICAL': 'red'   
         }
     )
 
@@ -144,9 +146,14 @@ def main():
     if not os.path.exists(ATTACHMENT_PATH):
         os.makedirs(ATTACHMENT_PATH)
 
-    if not os.path.exists(RESULT_PATH):
-        os.makedirs(RESULT_PATH)
-    
+    if not os.path.exists(OUTPUT_PATH):
+        os.makedirs(OUTPUT_PATH)
+
+    output_csv_path = OUTPUT_PATH + '/' + OUTPUT_FILE_NAME + '.csv'
+
+    if os.path.exists(output_csv_path): # remove any residuals
+        os.remove(output_csv_path) 
+
     while True: # main loop
         while True:
             try: 
@@ -160,12 +167,12 @@ def main():
                         break
 
                 if file_name:
-                    joined_path = os.path.join(ATTACHMENT_PATH, f'{file_name}') 
+                    attachment_pdf_path = os.path.join(ATTACHMENT_PATH, f'{file_name}') 
                     logging.info(f'{file_name} received')
                 
-                timing_df = pd.concat(tb.read_pdf(joined_path, pages='all', area = (60, 325, 918, 770), pandas_options={'header': None}, lattice=True, multiple_tables=True), ignore_index=True)
-                street_df = pd.concat(tb.read_pdf(joined_path, pages='all', area = (58, 270, 918, 310), pandas_options={'header': None}, lattice=True, multiple_tables=True), ignore_index=True)
-                period_df = pd.concat(tb.read_pdf(joined_path, pages='all', area = (60, 150, 918, 250), pandas_options={'header': None}, lattice=True, multiple_tables=True), ignore_index=True)
+                timing_df = pd.concat(tb.read_pdf(attachment_pdf_path, pages='all', area = (60, 325, 918, 770), pandas_options={'header': None}, lattice=True, multiple_tables=True), ignore_index=True)
+                street_df = pd.concat(tb.read_pdf(attachment_pdf_path, pages='all', area = (58, 270, 918, 310), pandas_options={'header': None}, lattice=True, multiple_tables=True), ignore_index=True)
+                period_df = pd.concat(tb.read_pdf(attachment_pdf_path, pages='all', area = (60, 150, 918, 250), pandas_options={'header': None}, lattice=True, multiple_tables=True), ignore_index=True)
 
 #**********************************************[Cleaning Data]**********************************************#
 
@@ -195,7 +202,7 @@ def main():
             except Exception as e:
                 logging.error(f'Error Cause: {e}')
                 
-                os.remove(joined_path)
+                os.remove(attachment_pdf_path)
                 logging.info(f'{file_name} deleted!')
 
                 continue
@@ -282,12 +289,10 @@ def main():
         filter_cols = ['Date', 'On Time', 'Duration']
         filtered_df = combined_df[filter_target][filter_cols].copy().reset_index(drop=True)
 
-        output_csv_path = RESULT_PATH + '/' + RESULT_FILE_NAME + '.csv'
-
-        logging.info(output_csv_path)
         filtered_df.to_csv(output_csv_path, encoding='utf-8')
+        logging.info('data processed and packaged')
 
-        os.remove(joined_path)
+        os.remove(attachment_pdf_path)
         logging.info(f'{file_name} deleted')
 
 if __name__ == '__main__':

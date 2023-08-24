@@ -14,11 +14,11 @@ with open('secrets.json', 'r') as json_file:
     per_data = json.load(json_file)
 
 # constants
-ATTACHMENT_PATH = 'downloaded'
-RESULT_PATH = 'output'
-RESULT_FILE_NAME = 'result'
-BOT_TOKEN = per_data['bot_token']
+ATTACHMENT_PATH = 'attachments'
+OUTPUT_PATH = 'output_results'
+OUTPUT_FILE_NAME = 'parsed_data'
 
+BOT_TOKEN = per_data['bot_token']
 CHANNEL_ID = int(per_data['channel_id']) # channel id needs to be an integer for discord_api to work
 
 bot = commands.Bot(command_prefix='!', intents=discord.Intents.all())
@@ -64,7 +64,7 @@ async def check_output_csv():
     
     channel = bot.get_channel(CHANNEL_ID)
 
-    output_csv_path = RESULT_PATH + '/' + RESULT_FILE_NAME + '.csv'
+    output_csv_path = OUTPUT_PATH + '/' + OUTPUT_FILE_NAME + '.csv'
     
     if os.path.exists(output_csv_path):
         

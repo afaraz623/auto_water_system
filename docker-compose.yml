@@ -5,17 +5,19 @@ services:
     build:
       context: ./discord_bot
     volumes:
-      - input-volume:/usr/app/downloaded
-      - output-volume:/usr/app/output
+      - input-volume:/usr/app/attachments
+      - output-volume:/usr/app/output_results
 
   parser:
     container_name: parser
     build:
       context: ./parser
     volumes:
-      - input-volume:/usr/app/downloaded
-      - output-volume:/usr/app/output
+      - input-volume:/usr/app/attachments
+      - output-volume:/usr/app/output_results
 
 volumes:
-  input-volume:
+  # keeping input and output data vols seperated 
+  input-volume: 
   output-volume:
+
