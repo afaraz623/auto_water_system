@@ -17,7 +17,7 @@ services:
       - output-volume:/usr/app/output_results
 
   server:
-    container_name: discord_bot
+    container_name: server
     build: ./server_src
     ports:
       - "9001:9001"

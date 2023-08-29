@@ -1,16 +1,16 @@
 import os
 import re
 import time
-import logging
 from datetime import datetime, timedelta
 
 import Levenshtein as lev
 import pandas as pd
 import tabula as tb
-import colorlog
+
+from logs import log_init, log
 
 
-# constants
+# Constants
 ATTACHMENT_PATH = 'attachments'
 OUTPUT_PATH = 'output_results'
 OUTPUT_FILE_NAME = 'parsed_data'
@@ -25,6 +25,7 @@ MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'Augus
 GROUP_ONE = VALID_STRTS[:7] 
 GROUP_TWO = VALID_STRTS[7:]
 
+# Helper Functions
 def unscramble_data(t_df, s_df, p_df):
     t_df = t_df.astype(str)
     t_df = t_df.applymap(lambda x: re.sub(r'(^[\s,]+|[\s,]+$)|(\s*,\s*)|hours|hour', '', x).strip().split('\r'))
@@ -119,40 +120,18 @@ def convert_time_24(time):
     return ':'.join(temp)
 
 def main():
-    logger = logging.getLogger()
-    logger.setLevel(logging.DEBUG) # setting default level to lowest
+    log_init()
+    log.info("parser started!")
 
-    dark_grey = '\033[90m' #defining ANSI escape codes for colour
-
-    # colour formatter with custom color and formatting
-    log_formatter = colorlog.ColoredFormatter(
-        f'%(bold)s{dark_grey}%(asctime)s %(log_color)s%(levelname)-8s{dark_grey}%(reset)s %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S',
-        log_colors={
-            'INFO': 'blue',   
-            'WARNING': 'yellow',
-            'ERROR': 'red', 
-            'CRITICAL': 'red'   
-        }
-    )
-
-    # handler for logging
-    handler = logging.StreamHandler()
-    handler.setFormatter(log_formatter)
-    logger.addHandler(handler)
-
-    logging.info("parser started!")
-
+    output_csv_path = OUTPUT_PATH + '/' + OUTPUT_FILE_NAME + '.csv'
+    if os.path.exists(output_csv_path): # remove any residual results
+        os.remove(output_csv_path) 
+    
     if not os.path.exists(ATTACHMENT_PATH):
         os.makedirs(ATTACHMENT_PATH)
 
     if not os.path.exists(OUTPUT_PATH):
         os.makedirs(OUTPUT_PATH)
-
-    output_csv_path = OUTPUT_PATH + '/' + OUTPUT_FILE_NAME + '.csv'
-
-    if os.path.exists(output_csv_path): # remove any residuals
-        os.remove(output_csv_path) 
 
     while True: # main loop
         while True:
@@ -168,7 +147,7 @@ def main():
 
                 if file_name:
                     attachment_pdf_path = os.path.join(ATTACHMENT_PATH, f'{file_name}') 
-                    logging.info(f'{file_name} received')
+                    log.info(f'{file_name} received')
                 
                 timing_df = pd.concat(tb.read_pdf(attachment_pdf_path, pages='all', area = (60, 325, 918, 770), pandas_options={'header': None}, lattice=True, multiple_tables=True), ignore_index=True)
                 street_df = pd.concat(tb.read_pdf(attachment_pdf_path, pages='all', area = (58, 270, 918, 310), pandas_options={'header': None}, lattice=True, multiple_tables=True), ignore_index=True)
@@ -200,10 +179,10 @@ def main():
                 break
             
             except Exception as e:
-                logging.error(f'Error Cause: {e}')
+                log.error(f'Error Cause: {e}')
                 
                 os.remove(attachment_pdf_path)
-                logging.info(f'{file_name} deleted!')
+                log.info(f'{file_name} deleted!')
 
                 continue
 
@@ -220,7 +199,7 @@ def main():
             street_passed = True
 
         if not street_passed:
-            logging.critical('Street elements do not match predefined street numbers')
+            log.critical('Street elements do not match predefined street numbers')
 
         # matching street numbers with designated dates and extending the dates to their respective rows
         date = datetime.strptime(combined_df.loc[1, 'Date'], '%d-%m-%Y') 
@@ -251,7 +230,7 @@ def main():
                 continue
 
             if diff != timedelta(days=1):
-                logging.critical('Dates are not incremented by one.')
+                log.critical('Dates are not incremented by one.')
             
             prev_date = curr_date
 
@@ -277,7 +256,7 @@ def main():
                 try:
                     combined_df.loc[i, 'Duration'] = re.sub(r'.0', '', str(diff_hours))
                 except:
-                    logging.critical(f'Timing do not match duration values. idx: {i-1}')
+                    log.critical(f'Timing do not match duration values. idx: {i-1}')
 
         # removing the temporary 'nan' row and reseting the index
         combined_df.drop(0, axis=0, inplace=True)
@@ -290,10 +269,10 @@ def main():
         filtered_df = combined_df[filter_target][filter_cols].copy().reset_index(drop=True)
 
         filtered_df.to_csv(output_csv_path, encoding='utf-8')
-        logging.info('data processed and packaged')
+        log.info('data processed and packaged')
 
         os.remove(attachment_pdf_path)
-        logging.info(f'{file_name} deleted')
+        log.info(f'{file_name} deleted')
 
 if __name__ == '__main__':
     main()
