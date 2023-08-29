@@ -2,16 +2,27 @@ version: '3'
 services:
   discord_bot:
     container_name: discord_bot
-    build: ./discord_bot
+    build: ./d_bot_src
     volumes:
       - input-volume:/usr/app/attachments
       - output-volume:/usr/app/output_results
 
   parser:
     container_name: parser
-    build: ./parser
+    build: ./parser_src
     depends_on:
       - discord_bot
+    volumes:
+      - input-volume:/usr/app/attachments
+      - output-volume:/usr/app/output_results
+
+  server:
+    container_name: discord_bot
+    build: ./server_src
+    ports:
+      - "9001:9001"
+    networks:
+      - aws_network
     volumes:
       - input-volume:/usr/app/attachments
       - output-volume:/usr/app/output_results
@@ -20,4 +31,7 @@ volumes:
   # keeping input and output data vols seperated 
   input-volume: 
   output-volume:
+
+networks:
+  aws_network:
 
