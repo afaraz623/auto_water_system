@@ -1,8 +1,6 @@
 import json
 import os
 import logging
-import time
-import asyncio
 
 import discord 
 import pandas as pd
@@ -38,8 +36,6 @@ async def on_ready():
 async def on_message(msg):
     if msg.channel.id == CHANNEL_ID:  
         
-        channel = bot.get_channel(CHANNEL_ID)
-
         if msg.attachments and msg.attachments[0].filename.endswith('.pdf'):
             attachment = msg.attachments[0]
             file_data = await attachment.read()
