@@ -3,6 +3,8 @@ services:
   discord_bot:
     container_name: discord_bot
     build: ./d_bot_src
+    networks:
+      - aws_network
     volumes:
       - input-volume:/usr/app/attachments
       - output-volume:/usr/app/output_results
@@ -23,8 +25,9 @@ services:
       - "9001:9001"
     networks:
       - aws_network
+    depends_on:
+      - parser
     volumes:
-      - input-volume:/usr/app/attachments
       - output-volume:/usr/app/output_results
 
 volumes:

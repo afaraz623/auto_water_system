@@ -119,6 +119,7 @@ def convert_time_24(time):
     
     return ':'.join(temp)
 
+
 def main():
     log_init()
     log.info("parser started!")
@@ -183,7 +184,7 @@ def main():
                 
                 os.remove(attachment_pdf_path)
                 log.info(f'{file_name} deleted!')
-
+                
                 continue
 
 #**********************************************[Verifying Data]**********************************************#
