@@ -1,13 +1,11 @@
 version: '3'
 services:
   discord_bot:
-    container_name: discord_bot
+    container_name: bot
     build: ./d_bot_src
-    networks:
-      - aws_network
     volumes:
-      - input-volume:/usr/app/attachments
-      - output-volume:/usr/app/output_results
+      - extraction_input:/usr/app/attachments
+      - extraction_output:/usr/app/output_results
 
   parser:
     container_name: parser
@@ -15,26 +13,50 @@ services:
     depends_on:
       - discord_bot
     volumes:
-      - input-volume:/usr/app/attachments
-      - output-volume:/usr/app/output_results
+      - extraction_input:/usr/app/attachments
+      - extraction_output:/usr/app/output_results
 
-  server:
-    container_name: server
-    build: ./server_src
-    ports:
-      - "9001:9001"
-    networks:
-      - aws_network
-    depends_on:
-      - parser
+  broker:
+    container_name: mqtt
+    image: eclipse-mosquitto
     volumes:
-      - output-volume:/usr/app/output_results
+      - mosquitto_config:/mosquitto/config
+      - mosquitto_log:/mosquitto/log
+      - mosquitto_data:/mosquitto/data
+
+    ports:
+      - target: 1883
+        published: 1883
+        protocol: tcp
+        mode: host
 
 volumes:
-  # keeping input and output data vols seperated 
-  input-volume: 
-  output-volume:
+  extraction_input: 
+    name: "input_ex"
 
-networks:
-  aws_network:
+  extraction_output:
+    name: "output_ex"
+  
+  mosquitto_config:
+    name: "config_mqtt"
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./broker_src/config
 
+  mosquitto_log:
+    name: "log_mqtt"
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./broker_src/log
+
+  mosquitto_data:
+    name: "data_mqtt"
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./broker_src/data
