@@ -1,11 +1,16 @@
 import json
 import os
-import logging
+import pickle
+import queue
 
 import discord 
 import pandas as pd
 from discord.ext import tasks, commands
 from tabulate import tabulate
+import paho.mqtt.client as mqtt
+
+from logs import log_init, log
+
 
 # keeping personal stuff out of the pushed repo
 with open('secrets.json', 'r') as json_file:
@@ -13,21 +18,24 @@ with open('secrets.json', 'r') as json_file:
 
 # constants
 ATTACHMENT_PATH = 'attachments'
-OUTPUT_PATH = 'output_results'
-OUTPUT_FILE_NAME = 'parsed_data'
+TOPIC = 'parsed_data'
+BROKER_IP = '192.168.100.3'
+BROKER_PORT = 1883
 
 BOT_TOKEN = per_data['bot_token']
 CHANNEL_ID = int(per_data['channel_id']) # channel id needs to be an integer for discord_api to work
 
 bot = commands.Bot(command_prefix='!', intents=discord.Intents.all())
 
-# creating a logger
-logger = logging.getLogger("discord.client")
-logger.setLevel(logging.INFO)
+# setup custom logs
+log_init(log.DEBUG)
+
+data_queue = queue.Queue()
+
 
 @bot.event
 async def on_ready():
-    logger.info(f"Logged in as {bot.user.name}")
+    log.info(f"Logged in as {bot.user.name}")
 
     channel = bot.get_channel(CHANNEL_ID)
     await channel.send(f'{bot.user.name} is ready')
@@ -35,7 +43,7 @@ async def on_ready():
 @bot.event
 async def on_message(msg):
     if msg.channel.id == CHANNEL_ID:  
-        
+
         if msg.attachments and msg.attachments[0].filename.endswith('.pdf'):
             attachment = msg.attachments[0]
             file_data = await attachment.read()
@@ -48,33 +56,40 @@ async def on_message(msg):
             with open(file_path, 'wb') as f:
                 f.write(file_data)
             
-            logger.info(f'{attachment.filename} downloaded!')
+            log.info(f'{attachment.filename} downloaded!')
 
-            if not check_output_csv.is_running():  # checking if the loop is already running
-                check_output_csv.start()
+            def on_message(client, userdata, msg):
+                try:
+                    data = pickle.loads(msg.payload)
+                    data_queue.put(data)
+                    log.debug(f'Received Data in queue: {data}')
+
+                    client.disconnect()
+
+                except Exception as e:
+                    log.error(f'Error while unpickling data: {e}')
+            
+            client = mqtt.Client('Bot')
+            client.connect(BROKER_IP, BROKER_PORT, 60)
+
+            client.loop_start()
+            client.subscribe(TOPIC, qos=0)
+            client.on_message = on_message
+
+            if not send_output_to_user.is_running():  # checking if the loop is already running
+                send_output_to_user.start()
 
     await bot.process_commands(msg) # only catch atttachments and leave bot commands
 
-@tasks.loop(seconds=5) 
-async def check_output_csv():
-    
-    channel = bot.get_channel(CHANNEL_ID)
-
-    output_csv_path = OUTPUT_PATH + '/' + OUTPUT_FILE_NAME + '.csv'
-    
-    if os.path.exists(output_csv_path):
+@tasks.loop(seconds=1) # if queue has data, it will be sent to the user else keep waiting for the msg to arrive
+async def send_output_to_user():
+    if not data_queue.empty():
+        channel = bot.get_channel(CHANNEL_ID)
         
-        data = pd.read_csv(output_csv_path)
-        data.drop('Unnamed: 0', axis = 1, inplace=True)
-        
-        table = tabulate(data, headers='keys', tablefmt='pretty', showindex=False)
-
+        table = tabulate(data_queue.get(), headers='keys', tablefmt='pretty', showindex=False)
         await channel.send("```\n" + table + "\n```")
-        logger.info("result sent to user")
+        log.info("result sent to user")
 
-        os.remove(output_csv_path)
-        logger.info("result.csv deleted")
-
-        check_output_csv.cancel() 
+        send_output_to_user.stop() 
 
 bot.run(BOT_TOKEN)

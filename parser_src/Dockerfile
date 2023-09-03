@@ -1,5 +1,5 @@
 FROM base:latest
 
-COPY main.py ./
+COPY main.py .
 
 CMD ["python", "main.py"]

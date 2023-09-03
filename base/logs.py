@@ -1,9 +1,9 @@
 import logging as log
 import colorlog
 
-def log_init():
+def log_init(log_lvl):
     logger = log.getLogger()
-    logger.setLevel(log.DEBUG) # setting default level to lowest
+    logger.setLevel(log_lvl) # setting default level to lowest
 
     dark_grey = '\033[90m' #defining ANSI escape codes for colour
 

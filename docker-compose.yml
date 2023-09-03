@@ -5,7 +5,6 @@ services:
     build: ./d_bot_src
     volumes:
       - extraction_input:/usr/app/attachments
-      - extraction_output:/usr/app/output_results
 
   parser:
     container_name: parser
@@ -14,7 +13,6 @@ services:
       - discord_bot
     volumes:
       - extraction_input:/usr/app/attachments
-      - extraction_output:/usr/app/output_results
 
   broker:
     container_name: mqtt
@@ -34,9 +32,7 @@ volumes:
   extraction_input: 
     name: "input_ex"
 
-  extraction_output:
-    name: "output_ex"
-  
+# Volumes ensure data and settings persist in the MQTT broker container across restarts
   mosquitto_config:
     name: "config_mqtt"
     driver: local
@@ -46,7 +42,8 @@ volumes:
       device: ./broker_src/config
 
   mosquitto_log:
-    name: "log_mqtt"
+    name: "log_mqtt"  
+
     driver: local
     driver_opts:
       type: none

@@ -1,19 +1,22 @@
 import os
 import re
 import time
+import pickle
 from datetime import datetime, timedelta
 
-import Levenshtein as lev
 import pandas as pd
 import tabula as tb
+import Levenshtein as lev
+import paho.mqtt.client as mqtt
 
 from logs import log_init, log
 
 
 # Constants
 ATTACHMENT_PATH = 'attachments'
-OUTPUT_PATH = 'output_results'
-OUTPUT_FILE_NAME = 'parsed_data'
+TOPIC = 'parsed_data'
+BROKER_IP = '192.168.100.3'
+BROKER_PORT = 1883
 
 FIRST_REAL_ROW = 1
 SECOND_ROW = 2
@@ -119,20 +122,34 @@ def convert_time_24(time):
     
     return ':'.join(temp)
 
+def publish_dataframe(broker_ip, broker_port, topic, serialized_data):
+    def on_connect(client, userdata, flags, rc):
+        if rc == 0:
+            log.info(f'Connected to MQTT broker with result code: {str(rc)}')
+
+    try:
+        client = mqtt.Client('parser')
+        client.on_connect = on_connect
+        client.connect(broker_ip, broker_port, 60)
+
+        client.loop_start()
+        client.publish(topic, serialized_data, qos=0) 
+        client.disconnect()
+        client.loop_stop()
+
+        return True
+
+    except ValueError as ve:
+        log.error(f'Error Cause: {ve}')
+        return False
+
 
 def main():
-    log_init()
+    log_init(log.DEBUG)
     log.info("parser started!")
 
-    output_csv_path = OUTPUT_PATH + '/' + OUTPUT_FILE_NAME + '.csv'
-    if os.path.exists(output_csv_path): # remove any residual results
-        os.remove(output_csv_path) 
-    
     if not os.path.exists(ATTACHMENT_PATH):
         os.makedirs(ATTACHMENT_PATH)
-
-    if not os.path.exists(OUTPUT_PATH):
-        os.makedirs(OUTPUT_PATH)
 
     while True: # main loop
         while True:
@@ -154,7 +171,7 @@ def main():
                 street_df = pd.concat(tb.read_pdf(attachment_pdf_path, pages='all', area = (58, 270, 918, 310), pandas_options={'header': None}, lattice=True, multiple_tables=True), ignore_index=True)
                 period_df = pd.concat(tb.read_pdf(attachment_pdf_path, pages='all', area = (60, 150, 918, 250), pandas_options={'header': None}, lattice=True, multiple_tables=True), ignore_index=True)
 
-#**********************************************[Cleaning Data]**********************************************#
+#--------------------------------------------[Cleaning Data]--------------------------------------------#
 
                 cleaned_df_list = unscramble_data(timing_df, street_df, period_df)
                 
@@ -180,14 +197,14 @@ def main():
                 break
             
             except Exception as e:
-                log.error(f'Error Cause: {e}')
+                log.error(f'Error caused during: {e}')
                 
                 os.remove(attachment_pdf_path)
                 log.info(f'{file_name} deleted!')
                 
                 continue
 
-#**********************************************[Verifying Data]**********************************************#
+#--------------------------------------------[Verifying Data]--------------------------------------------#
         # checking streets
         verified_strts = 0
         street_passed = False
@@ -263,17 +280,22 @@ def main():
         combined_df.drop(0, axis=0, inplace=True)
         combined_df.reset_index(drop=True, inplace= True)
         
-#**********************************************[Filtering Data]**********************************************#
+#--------------------------------------------[Filtering Data]--------------------------------------------#
 
         filter_target = combined_df['Street'] == '5' # filtering useful data only
         filter_cols = ['Date', 'On Time', 'Duration']
         filtered_df = combined_df[filter_target][filter_cols].copy().reset_index(drop=True)
 
-        filtered_df.to_csv(output_csv_path, encoding='utf-8')
-        log.info('data processed and packaged')
+        serialized_data = pickle.dumps(filtered_df)
 
+        if publish_dataframe(BROKER_IP, BROKER_PORT, TOPIC, serialized_data):
+            log.info('published data successful')
+        else:
+            log.error('published data unsuccessful')
+        
         os.remove(attachment_pdf_path)
         log.info(f'{file_name} deleted')
+
 
 if __name__ == '__main__':
     main()

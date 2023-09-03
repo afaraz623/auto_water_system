@@ -1,35 +1,32 @@
-import socket
-from base.logs import log_init, log
+import logging as log
+import colorlog
 
 
-HEADERSIZE = 10
-server_address = ('172.19.0.3', 9001)
+def log_init(log_lvl):
+    logger = log.getLogger()
+    logger.setLevel(log_lvl) # setting default level to lowest
 
-log_init()
+    dark_grey = '\033[90m' #defining ANSI escape codes for colour
 
-with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as client_socket:
-    client_socket.connect(server_address)
-    
-    full_msg = b''
-    new_msg = True
-    
-    try:
-        while True:
-            msg = client_socket.recv(16)
+    # colour formatter with custom color and formatting
+    log_formatter = colorlog.ColoredFormatter(
+        f'%(bold)s{dark_grey}%(asctime)s %(log_color)s%(levelname)-8s{dark_grey}%(reset)s %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S',
+        log_colors={
+            'DEBUG' : 'purple',
+            'INFO': 'blue',   
+            'WARNING': 'yellow',
+            'ERROR': 'red', 
+            'CRITICAL': 'red'   
+        }
+    )
 
-            if new_msg:
-                msg_len = int(msg[:HEADERSIZE].decode('utf-8'))
-                new_msg = False
-            
-            full_msg += msg 
+    # handler for logging
+    handler = log.StreamHandler()
+    handler.setFormatter(log_formatter)
+    logger.addHandler(handler)
 
-            if len(full_msg) - HEADERSIZE == msg_len:
-                log.info(f'new message length: {msg_len}')
-                
-                log.info(full_msg[HEADERSIZE:].decode('utf-8'))
-                
-                new_msg = True
-                full_msg = b''
+log_init(log.INFO)
 
-    except Exception as e:
-        log.info(f'An exception occured: {e}')
+log.debug('testing debug')
+log.info('testing info')
