@@ -1,23 +1,59 @@
 version: '3'
 services:
   discord_bot:
-    container_name: discord_bot
-    build: ./discord_bot
+    container_name: bot
+    build: ./d_bot_src
     volumes:
-      - input-volume:/usr/app/attachments
-      - output-volume:/usr/app/output_results
+      - extraction_input:/usr/app/attachments
 
   parser:
     container_name: parser
-    build: ./parser
+    build: ./parser_src
     depends_on:
       - discord_bot
     volumes:
-      - input-volume:/usr/app/attachments
-      - output-volume:/usr/app/output_results
+      - extraction_input:/usr/app/attachments
+
+  broker:
+    container_name: mqtt
+    image: eclipse-mosquitto
+    volumes:
+      - mosquitto_config:/mosquitto/config
+      - mosquitto_log:/mosquitto/log
+      - mosquitto_data:/mosquitto/data
+
+    ports:
+      - target: 1883
+        published: 1883
+        protocol: tcp
+        mode: host
 
 volumes:
-  # keeping input and output data vols seperated 
-  input-volume: 
-  output-volume:
+  extraction_input: 
+    name: "input_ex"
 
+# Volumes ensure data and settings persist in the MQTT broker container across restarts
+  mosquitto_config:
+    name: "config_mqtt"
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./broker_src/config
+
+  mosquitto_log:
+    name: "log_mqtt"  
+
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./broker_src/log
+
+  mosquitto_data:
+    name: "data_mqtt"
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./broker_src/data
