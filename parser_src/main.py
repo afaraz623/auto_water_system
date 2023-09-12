@@ -1,301 +1,403 @@
-import os
 import re
-import time
-import pickle
 from datetime import datetime, timedelta
+import argparse
+import threading
 
+import Levenshtein as lev
 import pandas as pd
 import tabula as tb
-import Levenshtein as lev
-import paho.mqtt.client as mqtt
 
-from logs import log_init, log
+from logs import log_init, debug_status, log, Status
 
 
 # Constants
-ATTACHMENT_PATH = 'attachments'
-TOPIC = 'parsed_data'
-BROKER_IP = '192.168.100.3'
-BROKER_PORT = 1883
+DEBUG_DF_LEN = 50
+NUM_KEYWORDS_THES = 2
+CLIPPING_UNITS = 5
 
-FIRST_REAL_ROW = 1
-SECOND_ROW = 2
-COL_NAMES = ['Date', 'Street', 'On Time', 'Off Time', 'Duration']
-VALID_STRTS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15']
+COL_NAMES = ["Date", "Street", "On Time", "Off Time", "Duration"]
 MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
-
-# spliting the valid_strts list into two parts for 'Date' column varification
-GROUP_ONE = VALID_STRTS[:7] 
-GROUP_TWO = VALID_STRTS[7:]
-
-# Helper Functions
-def unscramble_data(t_df, s_df, p_df):
-    t_df = t_df.astype(str)
-    t_df = t_df.applymap(lambda x: re.sub(r'(^[\s,]+|[\s,]+$)|(\s*,\s*)|hours|hour', '', x).strip().split('\r'))
-    t_df = t_df.applymap(lambda lst: [x.replace(';', ':') for x in lst])
-    t_df = t_df.applymap(lambda lst: [x.replace('pm', 'PM') for x in lst])
-    t_df = t_df.applymap(lambda lst: [x.replace('am', 'AM') for x in lst])
-    t_df = t_df.applymap(lambda lst: [x.replace(' ', ':') for x in lst])
-    t_df = t_df.explode(0).explode(1).explode(2)
-
-    temp = []
-    for strt_num in s_df[0]:
-        strt_num = re.sub(r'(^[\s,]+|[\s,]+$)|(\s*,\s*)', '', strt_num).strip()   
-        for i in strt_num.split('\r'):
-            temp.append(i)
-
-    s_df = pd.DataFrame(temp)
-
-    p_df.drop(1, axis=1, inplace=True)
-    p_df = p_df.astype(str)
-    p_df = p_df.applymap(lambda x: re.sub(r'(^[\s,]+|[\s,]+$)|(\s*,\s*)|,{2,}', '', x).strip())
-    p_df = p_df.applymap(lambda x: re.sub(r'^[^\d]*(?=\d)', '', x))
-    p_df = p_df.applymap(lambda x: re.sub(r'(\d{2})([a-zA-Z]+)(\d{4})', r'\1;\2;\3', x))
-
-    # renaming columns of dataframes
-    t_df.rename(columns={0 : 'On Time', 1 : 'Off Time', 2 : 'Duration'}, inplace=True)
-    s_df.rename(columns={0 : 'Street'}, inplace=True)
-    p_df.rename(columns={0 : 'Date'}, inplace=True)
-
-    return [p_df, s_df, t_df]
-
-def check_date(date, index, v_dates):
-    if isinstance(date, str):
-        if date in ['', 'nan']:
-            return date
-        
-        elif re.match(r'^\d{2};[a-zA-Z]+;\d{4}$', date):
-            v_dates.append(index) # appeading valid date indices for further use
-            
-            split_date = date.split(';')
-            corrected_month = min(MONTHS, key=lambda x: lev.distance(x.lower(), split_date[1].lower()))
-            corrected_month = datetime.strptime(corrected_month, '%B')
-
-            temp = []
-            for part in split_date:
-                if part == split_date[1]:
-                    temp.append(corrected_month.strftime('%m'))
-                else:
-                    temp.append(part)
-            
-            return '-'.join(temp)
-        
-        else:
-            return 'marker' # leaving marker where date is malformed
-
-def fix_date(df, row, v_dates):
-    if row == 1: # if the first date is malformed
-        next_date = datetime.strptime(df.loc[v_dates[0], 'Date'], '%d-%m-%Y')
-        prev_date = next_date - timedelta(days=1)
-        
-        return prev_date
-
-    else:
-        temp_lst = sorted(v_dates + [row]) # the fucking clever way
-        idx = temp_lst.index(row)
-        
-        prev_date = datetime.strptime(df.loc[temp_lst[idx - 1], 'Date'], '%d-%m-%Y')
-        next_date = prev_date + timedelta(days=1)
-
-        return next_date
-
-def convert_time_24(time):
-    temp = []
-    temp = time.split(':')
-
-    if temp[0] == '12':
-        if temp[2] == 'AM':
-            temp[0] = '00'
-        temp[2] = '00'
-    
-    elif len(temp[0]) == 1:
-        if temp[2] == 'PM':
-            temp[0] = str(int(temp[0]) + 12)
-        else:
-            temp[0] = '0' + temp[0]
-        temp[2] = '00'
-
-    if temp[2] == 'PM':
-        temp[0] = str(int(temp[0]) + 12)
-    
-    temp[2] = '00'
-    
-    return ':'.join(temp)
-
-def publish_dataframe(broker_ip, broker_port, topic, serialized_data):
-    def on_connect(client, userdata, flags, rc):
-        if rc == 0:
-            log.info(f'Connected to MQTT broker with result code: {str(rc)}')
-
-    try:
-        client = mqtt.Client('parser')
-        client.on_connect = on_connect
-        client.connect(broker_ip, broker_port, 60)
-
-        client.loop_start()
-        client.publish(topic, serialized_data, qos=0) 
-        client.disconnect()
-        client.loop_stop()
-
-        return True
-
-    except ValueError as ve:
-        log.error(f'Error Cause: {ve}')
-        return False
+STREETS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15']
 
 
-def main():
-    log_init(log.DEBUG)
-    log.info("parser started!")
+# Tweak_area helper Functions
+def extract_pdf(path: str, adjusted_area: list) -> pd.DataFrame:
+    	return pd.concat(tb.read_pdf(path,
+                                     pages="all",
+                                     area=adjusted_area,
+                                     pandas_options={"header": None},
+                                     lattice=True,
+                                     multiple_tables=True),
+                    		     ignore_index=True)
 
-    if not os.path.exists(ATTACHMENT_PATH):
-        os.makedirs(ATTACHMENT_PATH)
+def find_keyword(keyword: str, df: pd.DataFrame, expand_right: bool) -> bool:
+	how_many = 0
+	first_column = df.iloc[:, 0]
 
-    while True: # main loop
-        while True:
-            try: 
-                file_name = None
-                while not any(filename.lower().endswith('.pdf') for filename in os.listdir(ATTACHMENT_PATH)):
-                    time.sleep(10) # refreshing every 60 seconds. 10 for debugging
-                
-                for filename in os.listdir(ATTACHMENT_PATH):
-                    if filename.lower().endswith('.pdf'):
-                        file_name = filename
-                        break
+	if ";" in keyword:
+		seperated = keyword.split(";")
+		keyword = seperated[0]
 
-                if file_name:
-                    attachment_pdf_path = os.path.join(ATTACHMENT_PATH, f'{file_name}') 
-                    log.info(f'{file_name} received')
-                
-                timing_df = pd.concat(tb.read_pdf(attachment_pdf_path, pages='all', area = (60, 325, 918, 770), pandas_options={'header': None}, lattice=True, multiple_tables=True), ignore_index=True)
-                street_df = pd.concat(tb.read_pdf(attachment_pdf_path, pages='all', area = (58, 270, 918, 310), pandas_options={'header': None}, lattice=True, multiple_tables=True), ignore_index=True)
-                period_df = pd.concat(tb.read_pdf(attachment_pdf_path, pages='all', area = (60, 150, 918, 250), pandas_options={'header': None}, lattice=True, multiple_tables=True), ignore_index=True)
+	if not expand_right:
+		first_column = df.iloc[:, -1]
+		if ";" in keyword: keyword = seperated[1]
 
-#--------------------------------------------[Cleaning Data]--------------------------------------------#
+	for row in first_column:
+		if re.search(rf'\b{keyword}\b', str(row), re.IGNORECASE):
+			how_many += 1
+	
+	if how_many >= NUM_KEYWORDS_THES: 
+		return True
+	return False
 
-                cleaned_df_list = unscramble_data(timing_df, street_df, period_df)
-                
-                combined_df = pd.concat(cleaned_df_list, axis=1)
+# This function begins by extracting data from the right side with a ball park area (bpa), It then refines this area of interest (AOI) through   
+# iterations while checking each column for specific keywords. If it finds two or more keywords in a single column, it starts shrinking the area 
+# from the left side. This iterative process continues until it obtains a single-column extraction with the best-defined area of interest.
+#	  
+#	|  bpa --> AOI <-- bpa  |
+#
+def tweak_area(df: pd.DataFrame, path: str, keyword: str, area: list, expected_columns: int, expand_right: bool) -> pd.DataFrame:
 
-                combined_df.iloc[0] = 'nan' # added temporarily to make indices match pdf's
-                
-                for col in COL_NAMES: # removing extra column names without attacfing index
-                    combined_df = combined_df[~combined_df[col].str.contains(col, case=False, na=False)]
-                combined_df.reset_index(drop=True, inplace=True)
+	if find_keyword(keyword, df,expand_right ) and len(df.columns) == expected_columns:
+		return df
 
-                verified_dates = []
-                for row in range(len(combined_df)):
-                    combined_df.loc[row, 'Date'] = check_date(combined_df.loc[row, 'Date'], row, verified_dates)
+	if expand_right: 
+		if find_keyword(keyword, df, expand_right):
+			expand_right = False
 
-                for row in range(FIRST_REAL_ROW, len(combined_df)):       
-                        if combined_df.loc[row, 'Date'] == 'marker':
-                            combined_df.loc[row, 'Date'] = fix_date(combined_df, row, verified_dates).strftime('%d-%m-%Y')
+		df = extract_pdf(path, area)
+		area[1] += CLIPPING_UNITS #--------> AOI
+		log.debug(f"{keyword} - expand right - {area}")
+		return tweak_area(df, path, keyword, area, expected_columns, expand_right)
 
-                for col in ['On Time', 'Off Time']:
-                    for row in range(FIRST_REAL_ROW, len(combined_df)):
-                        combined_df.loc[row, col] = convert_time_24(combined_df.loc[row, col])
-                break
-            
-            except Exception as e:
-                log.error(f'Error caused during: {e}')
-                
-                os.remove(attachment_pdf_path)
-                log.info(f'{file_name} deleted!')
-                
-                continue
+	df = extract_pdf(path, area)
+	area[3] -= CLIPPING_UNITS # AOI <--------
+	log.debug(f"{keyword} - expand left - {area}")
+	return tweak_area(df, path, keyword, area, expected_columns, expand_right)
 
-#--------------------------------------------[Verifying Data]--------------------------------------------#
-        # checking streets
-        verified_strts = 0
-        street_passed = False
+# This class provides methods for cleaning and formatting data in a DataFrame. It is designed to handle data with specific formatting issues such as 
+# noise, carriage returns, double characters, and malformed dates, streets, and timings. The methods either remove the irrelevant data or mark malformed 
+# data for further processing. 
+class CleanData:
+	def __init__(self):
+		pass
 
-        for strt in combined_df['Street']:
-            if strt in VALID_STRTS:
-                verified_strts += 1
+	def _remove_noise(self, elem: str) -> str:
+		elem = str(elem).lower().replace(";", ":").replace(",", ";").replace("hours", "").replace("hour", "").replace("am", "AM").replace("pm", "PM")
+		# all characters except '/r', alphabets, numbers, colons and semi-colons are removed
+		elem = re.sub(r'[^a-zA-Z0-9:;.\s]|(?!/r)', '', str(elem)).strip()
+		return elem
 
-        if verified_strts == len(combined_df['Street']) - 1: # not counting the 'nan' value in first row
-            street_passed = True
+	def _fix_carriage_return(self, df: pd.DataFrame) -> pd.DataFrame:
+		num_of_cols = df.shape[1]
 
-        if not street_passed:
-            log.critical('Street elements do not match predefined street numbers')
+		for col in range(num_of_cols):
+			df[col] = df[col].str.split('\r')
+			df = df.explode(col)
 
-        # matching street numbers with designated dates and extending the dates to their respective rows
-        date = datetime.strptime(combined_df.loc[1, 'Date'], '%d-%m-%Y') 
-        incre_date = False
+		df.reset_index(drop=True, inplace=True)
+		return df
 
-        for i in range(len(combined_df)):
-            street_number = combined_df['Street'].iloc[i]
+	def _fix_double_chars(self, elem: str) -> str:
+		elem = re.sub(r"\s+", "", elem)
+		elem = re.sub(r";+", ";", elem)
+		return elem
 
-            if street_number in GROUP_ONE:
-                if incre_date:
-                    date += timedelta(days=1)
-                    incre_date = False
-                combined_df.loc[i, 'Date'] = date.strftime('%d-%m-%Y')
+	def _add_alignment(self, elem: str) -> str:
+		col_names_lower = [col.lower().replace(" ", "") for col in COL_NAMES]
+		if elem in col_names_lower:
+			return "AP" # alignment point 
+		return elem
 
-            elif street_number in GROUP_TWO:
-                if not incre_date:
-                    date += timedelta(days=1)
-                    incre_date = True
-                combined_df.loc[i, 'Date'] = date.strftime('%d-%m-%Y')
-        
-        # checking dates
-        prev_date = datetime.strptime(combined_df.loc[FIRST_REAL_ROW, 'Date'], '%d-%m-%Y')
-        for i in range(SECOND_ROW, len(combined_df)):
-            curr_date = datetime.strptime(combined_df.loc[i, 'Date'], '%d-%m-%Y')
-            diff = curr_date - prev_date # using the bigger date minus smaller date to measure diff of 1
+	#########  MIGHT NEED MORE WORK  ######### 
+	def _checking_malformed_date(self, date: str) -> str:
+		if re.match(r'^\d{2};[a-zA-Z]+;\d{4}$', date):  
+			split_date = date.split(';')
+			
+			corrected_month = min(MONTHS, key=lambda x: lev.distance(x.lower(), split_date[1]))
+			numerical_month = MONTHS.index(corrected_month.title()) + 1 # cuz list index starts from 0
+			
+			split_date[1] = str(numerical_month)
+			return "-".join(split_date)	
+		return "marker" # leaving marker where date is malformed
 
-            if diff == timedelta(days=0):
-                continue
+	def _checking_malformed_street(self, street: str) -> str:
+		if street == "AP":
+			return street
 
-            if diff != timedelta(days=1):
-                log.critical('Dates are not incremented by one.')
-            
-            prev_date = curr_date
+		elif street in STREETS:
+			return street 
+		return None
 
-        # checking timing
-        time_format = '%Y-%m-%d %H:%M:%S'
-        dummy_date = '1970-01-01'  # just for time calculation
+	def _checking_malformed_timing(self, time: str) -> str:
+		time = time.strip(";")
+		
+		if time == "AP" or re.match(r'^\d{1}$|^\d{1}\.\d{1}$', time):
+			return time
+		
+		elif re.match(r'^(0?[1-9]|1[0-2]):[0-5][0-9][apAP][mM]$', time):
+			split_time = time[:-2]  
+			am_pm = time[-2:]
+			return f"{split_time};{am_pm}"
+		return None
+	 
+	def clean_date(self, date: pd.DataFrame) -> pd.DataFrame:
+		date = date.map(self._remove_noise)
+		date = self._fix_carriage_return(date)
+		date = date.map(self._fix_double_chars)
 
-        for i in range(FIRST_REAL_ROW, len(combined_df)):
-            duration = float(combined_df.loc[i, 'Duration'])
+		date = date[date[0] != "Date".lower()]
+		date = date.reset_index(drop=True)
 
-            time_on = datetime.strptime(dummy_date + ' ' + combined_df.loc[i, 'On Time'], time_format)
-            time_off = datetime.strptime(dummy_date + ' ' + combined_df.loc[i, 'Off Time'], time_format)
+		date = date.map(lambda x: x.split(";", 1)[1].rstrip(';'))
+		date = date.map(self._checking_malformed_date)
+		date.rename(columns={0 : "Date"}, inplace=True)
+		return date
 
-            if time_off < time_on:
-                time_off += timedelta(days=1)
+	def clean_street(self, street: pd.DataFrame) -> pd.DataFrame:
+		street = street.map(self._remove_noise)
+		street = self._fix_carriage_return(street)
+		street = street.map(self._fix_double_chars)
+		street = street.map(self._add_alignment)
 
-            diff = time_off - time_on
+		street = street.map(self._checking_malformed_street)
+		street = street.dropna()
+		street = street.reset_index(drop=True)
+		street = street.rename(columns={0 : "Street"})
+		return street
 
-            diff_seconds = diff.total_seconds()
-            diff_hours = diff_seconds / 3600 # 60min * 60sec = total secs in 1 hr
+	def clean_time(self, time: pd.DataFrame) -> pd.DataFrame:
+		time = time.map(self._remove_noise)
+		time = self._fix_carriage_return(time)
+		time = time.map(self._fix_double_chars)
+		time = time.map(self._add_alignment)
+		
+		time = time.map(self._checking_malformed_timing)
+		time = time.dropna()
+		time = time.reset_index(drop=True)
+		time = time.rename(columns={0 : "On Time", 1 : "Off Time", 2 : "Duration"})
+		return time
 
-            if duration - diff_hours != 0:
-                try:
-                    combined_df.loc[i, 'Duration'] = re.sub(r'.0', '', str(diff_hours))
-                except:
-                    log.critical(f'Timing do not match duration values. idx: {i-1}')
+def get_first_date(date: pd.DataFrame) -> str:
+	FIRST_ROW = 0 
+	search_value = "marker"
+	valid_date_indices = []
+	marker_indices = []
 
-        # removing the temporary 'nan' row and reseting the index
-        combined_df.drop(0, axis=0, inplace=True)
-        combined_df.reset_index(drop=True, inplace= True)
-        
-#--------------------------------------------[Filtering Data]--------------------------------------------#
+	if date.at[FIRST_ROW, "Date"] != search_value:
+		log.debug(f"Date - 1st date is not a marker - {date.at[FIRST_ROW, 'Date']}")
+		return date.at[FIRST_ROW, "Date"]
+	
+	marker_indices = date.index[date["Date"] == search_value].tolist()
+	valid_date_indices = date.index[date["Date"] != search_value].tolist()
 
-        filter_target = combined_df['Street'] == '5' # filtering useful data only
-        filter_cols = ['Date', 'On Time', 'Duration']
-        filtered_df = combined_df[filter_target][filter_cols].copy().reset_index(drop=True)
+	for _ in marker_indices:
+		if _ != len(date) - 1: # dont care about the last date
+			next_valid_idx = min(list(filter(lambda x: x > _, valid_date_indices)))
+			valid_date = datetime.strptime(date.at[next_valid_idx, "Date"], '%d-%m-%Y')
 
-        serialized_data = pickle.dumps(filtered_df)
+			corrected = valid_date - timedelta(days=next_valid_idx - _)
 
-        if publish_dataframe(BROKER_IP, BROKER_PORT, TOPIC, serialized_data):
-            log.info('published data successful')
-        else:
-            log.error('published data unsuccessful')
-        
-        os.remove(attachment_pdf_path)
-        log.info(f'{file_name} deleted')
+			date.at[_, "Date"] = corrected.strftime('%d-%m-%Y')
 
+	log.debug(f"Date - 1st date after substituting marker - {date.at[FIRST_ROW, 'Date']}")
+	return date.at[FIRST_ROW, "Date"]
 
-if __name__ == '__main__':
-    main()
+def convert_to_24_hours(time_str: str) -> str:
+	if re.match(r'\d{1,2}:\d{2};[APap][Mm]', time_str):
+		time_12h = datetime.strptime(time_str, '%I:%M;%p')
+		time_24h = time_12h.strftime('%H:%M')
+		return time_24h
+	return time_str
+
+def add_structured_dates(street: pd.DataFrame, corr_date: datetime) -> pd.DataFrame:
+	date = datetime.strptime(corr_date, '%d-%m-%Y')
+
+	# spliting the STREETS list into two groups.
+	mask_group_one = street.isin(STREETS[:7]).any(axis=1)
+	mask_group_two = street.isin(STREETS[7:]).any(axis=1)
+
+	day_increment = timedelta(days=1)
+	generated_dates = []
+	incre_date = False
+
+	for _ in range(len(street)):
+		if mask_group_one[_]:
+			if incre_date:
+				date += day_increment
+				incre_date = False
+			generated_dates.append(date.strftime('%d-%m-%Y'))
+
+		elif mask_group_two[_]:
+			if not incre_date:
+				date += day_increment
+				incre_date = True
+			generated_dates.append(date.strftime('%d-%m-%Y'))
+
+	date_df = pd.DataFrame({"Date": generated_dates})
+	return date_df
+
+def merge_from_alignment(date: pd.DataFrame, street: pd.DataFrame, time: pd.DataFrame) -> pd.DataFrame:
+	search_value = 'AP'
+	temp_1 = []
+	temp_2 = []
+
+	strt_indices = street.index[street["Street"] == search_value].tolist()
+	time_indices = time.index[time["On Time"] == search_value].tolist()
+
+	# stopping points
+	strt_indices.append(len(street))
+	time_indices.append(len(time))
+
+	for _ in range(len(strt_indices) - 1):
+		street_sect = street.iloc[strt_indices[_] + 1:strt_indices[_ + 1]]
+		temp_1.append(street_sect)
+
+		time_sect = time.iloc[time_indices[_] + 1:time_indices[_ + 1]]
+		temp_2.append(time_sect)
+
+	merged_df = pd.merge(pd.concat(temp_1, axis=0), pd.concat(temp_2, axis=0), left_index=True, right_index=True, how='outer')
+	merged_df = merged_df.reset_index(drop=True)
+
+	merged_df = pd.concat([date, merged_df], axis=1)
+	return merged_df
+
+class VerifyData:
+	def __init__(self):
+		pass
+
+	def _veri_streets(self, street_sect: pd.DataFrame) -> bool:
+		veri_strt = 0
+
+		for _ in street_sect:
+			if _ in STREETS:
+				veri_strt += 1
+		
+		if veri_strt == len(street_sect):
+			return True
+		return False
+
+	def _veri_dates(self, dates_sect: pd.DataFrame) -> bool:
+		FIRST_ROW = 0
+		SECOND_ROW = 1
+		
+		prev_date = datetime.strptime(dates_sect.iat[FIRST_ROW], '%d-%m-%Y')
+
+		for _ in range(SECOND_ROW, len(dates_sect)):
+			curr_date = datetime.strptime(dates_sect.iat[_], '%d-%m-%Y')
+			diff = curr_date - prev_date # using the bigger minus smaller date to measure diff of 1
+
+			if diff == timedelta(days=0): # avoid false trigger on date stretching
+				continue
+			
+			if diff != timedelta(days=1):
+				return False
+			
+			prev_date = curr_date
+		return True
+
+	def analyse(self, combined: pd.DataFrame) -> pd.DataFrame:
+		if not self._veri_streets(combined["Street"]):
+			log.critical("Street - Street elements do not match predefined street numbers")
+
+		self._veri_dates(combined["Date"])
+			# log.critical("Date - Dates are not incremented by one.")
+def main():		
+	# Debug format: LINE NUMBER - DATAFRAME - DOING WHAT? - ANY VALUE CHANGES IN PROGRESS OR PASS/FAIL
+	log_init(log.DEBUG)
+
+	parser = argparse.ArgumentParser(description='Extracts data from water schedule')
+	parser.add_argument('-t', type=int, help='1-6: Select the pdf to test')
+	args = parser.parse_args()
+
+	test_num = args.t
+
+	# Ball park areas and column sizes for each dataframe
+	date_area_col   = ([40, 100, 920, 300], 1)
+	street_area_col = ([40, 220, 920, 360], 1)
+	timing_area_col = ([40, 275, 920, 830], 3)
+
+	path = f"samples/test{test_num}.pdf"	
+	unprocs = {}
+	log.debug(f"Processing data of {path[8:]}: ")
+
+	try: 
+		date_thread = threading.Thread(target=lambda: unprocs.update({"date": tweak_area(extract_pdf(path, 
+													     date_area_col[0]), 
+													     path, 
+													     "Date", 
+													     date_area_col[0], 
+													     date_area_col[1], 
+													     expand_right=True)}))
+		
+		street_thread = threading.Thread(target=lambda: unprocs.update({"street": tweak_area(extract_pdf(path, 
+														 street_area_col[0]), 
+														 path, 
+														 "Street", 
+														 street_area_col[0], 
+														 street_area_col[1], 
+														 expand_right=True)}))
+		
+		timing_thread = threading.Thread(target=lambda: unprocs.update({"time": tweak_area(extract_pdf(path, 
+														 timing_area_col[0]), 
+														 path, 
+														 "On Time;Duration", 
+														 timing_area_col[0], 
+														 timing_area_col[1], 
+														 expand_right=True)}))
+		
+		date_thread.start()
+		street_thread.start()
+		timing_thread.start()
+
+		threads = [date_thread, street_thread, timing_thread]
+
+		for thread in threads:
+			thread.join()
+
+	except:
+		status = Status.FAIL
+	else:
+		status = Status.PASS
+	debug_status("ALL - Tweaking area to extract correct data", status)
+
+	try:
+		Cleaning  = CleanData()
+		date_clean  = Cleaning.clean_date(unprocs["date"])
+		street_clean = Cleaning.clean_street(unprocs["street"])
+		time_clean = Cleaning.clean_time(unprocs["time"])
+
+	except:
+		status = Status.FAIL
+
+	else:
+		status = Status.PASS
+	debug_status("ALL - Cleaning and formatting data", status)
+
+	try:
+		date_corrected = get_first_date(date_clean)
+		time_converted = time_clean.map(convert_to_24_hours)	
+		generated_dates = add_structured_dates(street_clean, date_corrected)
+	
+	except:
+		status = Status.FAIL
+	else:
+		status = Status.PASS
+	debug_status("ALL - Process date and time data for structured output using street and date information", status)
+
+	try:
+		combined = merge_from_alignment(generated_dates, street_clean, time_converted)
+		Verifying = VerifyData()
+		Verifying.analyse(combined)
+		print(combined.head(DEBUG_DF_LEN))
+
+	except ValueError as ve:
+		print(ve)
+		status = Status.FAIL
+	else:
+		status = Status.PASS
+	debug_status("ALL - Verifying every element of df via their required methods", status)
+	
+
+if __name__ == "__main__":
+	main()
