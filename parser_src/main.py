@@ -16,8 +16,11 @@ NUM_KEYWORDS_THES = 2
 CLIPPING_UNITS = 5
 
 COL_NAMES = ["Date", "Street", "On Time", "Off Time", "Duration"]
-MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
-STREETS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15']
+MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+STREETS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15"]
+TIMING = ["01:00", "05:00", "07:00", "10:00", "13:00", "16:00", "19:00", "22:00"]
+
+ALIGN = "AP"
 
 
 # Tweak_area helper Functions
@@ -75,6 +78,125 @@ def tweak_area(df: pd.DataFrame, path: str, keyword: str, area: list, expected_c
 	log.debug(f"{keyword} - expand left - {area}")
 	return tweak_area(df, path, keyword, area, expected_columns, expand_right)
 
+# This function processes a DataFrame of dates, identifying the first occurrence of a "marker" date. It then replaces the marker date with a 
+# corrected date derived from the next valid date, considering the date offset. The function logs and returns the first corrected date as a string.
+def get_first_date(date: pd.DataFrame) -> str:
+	search_value = "marker"
+	valid_date_indices = []
+	marker_indices = []
+
+	if date.at[0, "Date"] != search_value:
+		log.debug(f"Date - 1st date is not a marker - {date.at[0, 'Date']}")
+		return date.at[0, "Date"]
+	
+	marker_indices = date.index[date["Date"] == search_value].tolist()
+	valid_date_indices = date.index[date["Date"] != search_value].tolist()
+
+	for _ in marker_indices:
+		if _ != len(date) - 1: # dont care about the last date
+			next_valid_idx = min(list(filter(lambda x: x > _, valid_date_indices)))
+			valid_date = datetime.strptime(date.at[next_valid_idx, "Date"], '%d-%m-%Y')
+
+			corrected = valid_date - timedelta(days=next_valid_idx - _)
+
+			date.at[_, "Date"] = corrected.strftime('%d-%m-%Y')
+
+	log.debug(f"Date - 1st date after substituting marker - {date.at[0, 'Date']}")
+	return date.at[0, "Date"]
+
+def convert_to_24_hours(time_str: str) -> str:
+	if re.match(r'\d{1,2}:\d{2};[APap][Mm]', time_str):
+		time_12h = datetime.strptime(time_str, '%I:%M;%p')
+		time_24h = time_12h.strftime('%H:%M')
+		return time_24h
+	return time_str
+
+# This function generates a DataFrame of structured dates based on input DataFrames for streets and time, and a given correction date. 
+# It splits the streets into two groups, applies a day increment, and generates dates accordingly. Dates are incremented alternately for 
+# the two street groups, and the resulting dates are returned in a DataFrame.
+def add_structured_dates(street: pd.DataFrame, time: pd.DataFrame, corr_date: datetime) -> pd.DataFrame:
+	date = datetime.strptime(corr_date, '%d-%m-%Y')
+
+	# spliting the STREETS list into two groups and masking them
+	mask_group_one = street.isin(STREETS[:7]).any(axis=1)
+	mask_group_two = street.isin(STREETS[7:]).any(axis=1)
+
+	day_incre = timedelta(days=1)
+	generated_dates = []
+	incre_date = False
+
+	for _ in range(len(street)):
+		if mask_group_one[_]:
+			if incre_date:
+				date += day_incre
+				incre_date = False
+			generated_dates.append(date.strftime('%d-%m-%Y'))
+
+		elif mask_group_two[_]:
+			if not incre_date:
+				date += day_incre
+				incre_date = True
+			generated_dates.append(date.strftime('%d-%m-%Y'))
+
+	date_df = pd.DataFrame({"Date": generated_dates})
+	return date_df
+
+# This function adjusts the "Duration" column in a DataFrame of date and time records. It computes the time difference between "On Time" 
+# and "Off Time," handles cases where "Off Time" spans the next day, and updates the "Duration" column to match the calculated hours. 
+# If the "Duration" aligns with the calculation, it remains unchanged; otherwise, it's modified. Any trailing ".0" in the "Duration" column 
+# is also removed.
+def correct_duration(date: pd.DataFrame) -> pd.DataFrame:
+	time_format = "%Y-%m-%d %H:%M"
+	dummy_date = '1970-01-01'  # just for time calculation
+	
+	for _ in range(len(date)):
+		duration = date.at[_, "Duration"]
+
+		if duration == ALIGN:
+			continue
+
+		time_on = datetime.strptime(dummy_date + " " + date.at[_, "On Time"], time_format)
+		time_off = datetime.strptime(dummy_date + " " + date.at[_, "Off Time"], time_format)
+
+		if time_off < time_on: 
+			time_off += timedelta(days=1)
+
+		diff = time_off - time_on
+
+		diff_seconds = diff.total_seconds()
+		diff_hours = diff_seconds / 3600 # 60min * 60sec = total secs in 1 hr
+
+		if float(duration) - diff_hours != 0:
+			print(str(diff_hours))
+			date.at[_, "Duration"] = re.sub(r'.0', '', str(diff_hours))
+	return date
+
+# This function merges data from three DataFrames (date, street, and time) based on alignment markers, combining sections of data between 
+# markers, aligning rows using their indices, and returning the result.
+def merge_from_alignment(date: pd.DataFrame, street: pd.DataFrame, time: pd.DataFrame) -> pd.DataFrame:
+	temp_1 = []
+	temp_2 = []
+
+	strt_indices = street.index[street["Street"] == ALIGN].tolist()
+	time_indices = time.index[time["On Time"] == ALIGN].tolist()
+
+	# stopping points
+	strt_indices.append(len(street))
+	time_indices.append(len(time))
+
+	for _ in range(len(strt_indices) - 1):
+		street_sect = street.iloc[strt_indices[_] + 1:strt_indices[_ + 1]]
+		temp_1.append(street_sect)
+
+		time_sect = time.iloc[time_indices[_] + 1:time_indices[_ + 1]]
+		temp_2.append(time_sect)
+
+	merged_df = pd.merge(pd.concat(temp_1, axis=0), pd.concat(temp_2, axis=0), left_index=True, right_index=True, how='outer')
+	merged_df = merged_df.reset_index(drop=True)
+
+	merged_df = pd.concat([date, merged_df], axis=1)
+	return merged_df
+
 # This class provides methods for cleaning and formatting data in a DataFrame. It is designed to handle data with specific formatting issues such as 
 # noise, carriage returns, double characters, and malformed dates, streets, and timings. The methods either remove the irrelevant data or mark malformed 
 # data for further processing. 
@@ -106,7 +228,7 @@ class CleanData:
 	def _add_alignment(self, elem: str) -> str:
 		col_names_lower = [col.lower().replace(" ", "") for col in COL_NAMES]
 		if elem in col_names_lower:
-			return "AP" # alignment point 
+			return ALIGN # alignment point 
 		return elem
 
 	#########  MIGHT NEED MORE WORK  ######### 
@@ -122,7 +244,7 @@ class CleanData:
 		return "marker" # leaving marker where date is malformed
 
 	def _checking_malformed_street(self, street: str) -> str:
-		if street == "AP":
+		if street == ALIGN:
 			return street
 
 		elif street in STREETS:
@@ -132,7 +254,7 @@ class CleanData:
 	def _checking_malformed_timing(self, time: str) -> str:
 		time = time.strip(";")
 		
-		if time == "AP" or re.match(r'^\d{1}$|^\d{1}\.\d{1}$', time):
+		if time == ALIGN or re.match(r'^\d{1}$|^\d{1}\.\d{1}$', time):
 			return time
 		
 		elif re.match(r'^(0?[1-9]|1[0-2]):[0-5][0-9][apAP][mM]$', time):
@@ -178,95 +300,13 @@ class CleanData:
 		time = time.rename(columns={0 : "On Time", 1 : "Off Time", 2 : "Duration"})
 		return time
 
-def get_first_date(date: pd.DataFrame) -> str:
-	FIRST_ROW = 0 
-	search_value = "marker"
-	valid_date_indices = []
-	marker_indices = []
-
-	if date.at[FIRST_ROW, "Date"] != search_value:
-		log.debug(f"Date - 1st date is not a marker - {date.at[FIRST_ROW, 'Date']}")
-		return date.at[FIRST_ROW, "Date"]
-	
-	marker_indices = date.index[date["Date"] == search_value].tolist()
-	valid_date_indices = date.index[date["Date"] != search_value].tolist()
-
-	for _ in marker_indices:
-		if _ != len(date) - 1: # dont care about the last date
-			next_valid_idx = min(list(filter(lambda x: x > _, valid_date_indices)))
-			valid_date = datetime.strptime(date.at[next_valid_idx, "Date"], '%d-%m-%Y')
-
-			corrected = valid_date - timedelta(days=next_valid_idx - _)
-
-			date.at[_, "Date"] = corrected.strftime('%d-%m-%Y')
-
-	log.debug(f"Date - 1st date after substituting marker - {date.at[FIRST_ROW, 'Date']}")
-	return date.at[FIRST_ROW, "Date"]
-
-def convert_to_24_hours(time_str: str) -> str:
-	if re.match(r'\d{1,2}:\d{2};[APap][Mm]', time_str):
-		time_12h = datetime.strptime(time_str, '%I:%M;%p')
-		time_24h = time_12h.strftime('%H:%M')
-		return time_24h
-	return time_str
-
-def add_structured_dates(street: pd.DataFrame, corr_date: datetime) -> pd.DataFrame:
-	date = datetime.strptime(corr_date, '%d-%m-%Y')
-
-	# spliting the STREETS list into two groups.
-	mask_group_one = street.isin(STREETS[:7]).any(axis=1)
-	mask_group_two = street.isin(STREETS[7:]).any(axis=1)
-
-	day_increment = timedelta(days=1)
-	generated_dates = []
-	incre_date = False
-
-	for _ in range(len(street)):
-		if mask_group_one[_]:
-			if incre_date:
-				date += day_increment
-				incre_date = False
-			generated_dates.append(date.strftime('%d-%m-%Y'))
-
-		elif mask_group_two[_]:
-			if not incre_date:
-				date += day_increment
-				incre_date = True
-			generated_dates.append(date.strftime('%d-%m-%Y'))
-
-	date_df = pd.DataFrame({"Date": generated_dates})
-	return date_df
-
-def merge_from_alignment(date: pd.DataFrame, street: pd.DataFrame, time: pd.DataFrame) -> pd.DataFrame:
-	search_value = 'AP'
-	temp_1 = []
-	temp_2 = []
-
-	strt_indices = street.index[street["Street"] == search_value].tolist()
-	time_indices = time.index[time["On Time"] == search_value].tolist()
-
-	# stopping points
-	strt_indices.append(len(street))
-	time_indices.append(len(time))
-
-	for _ in range(len(strt_indices) - 1):
-		street_sect = street.iloc[strt_indices[_] + 1:strt_indices[_ + 1]]
-		temp_1.append(street_sect)
-
-		time_sect = time.iloc[time_indices[_] + 1:time_indices[_ + 1]]
-		temp_2.append(time_sect)
-
-	merged_df = pd.merge(pd.concat(temp_1, axis=0), pd.concat(temp_2, axis=0), left_index=True, right_index=True, how='outer')
-	merged_df = merged_df.reset_index(drop=True)
-
-	merged_df = pd.concat([date, merged_df], axis=1)
-	return merged_df
-
+# This class verifies data integrity in a combined DataFrame, including street matching, date incrementation, and timing validation. 
+# It logs critical messages for failed verifications.
 class VerifyData:
 	def __init__(self):
 		pass
 
-	def _veri_streets(self, street_sect: pd.DataFrame) -> bool:
+	def _veri_street(self, street_sect: pd.DataFrame) -> bool:
 		veri_strt = 0
 
 		for _ in street_sect:
@@ -278,12 +318,9 @@ class VerifyData:
 		return False
 
 	def _veri_dates(self, dates_sect: pd.DataFrame) -> bool:
-		FIRST_ROW = 0
-		SECOND_ROW = 1
-		
-		prev_date = datetime.strptime(dates_sect.iat[FIRST_ROW], '%d-%m-%Y')
+		prev_date = datetime.strptime(dates_sect.iat[0], '%d-%m-%Y')
 
-		for _ in range(SECOND_ROW, len(dates_sect)):
+		for _ in range(1, len(dates_sect)):
 			curr_date = datetime.strptime(dates_sect.iat[_], '%d-%m-%Y')
 			diff = curr_date - prev_date # using the bigger minus smaller date to measure diff of 1
 
@@ -296,12 +333,27 @@ class VerifyData:
 			prev_date = curr_date
 		return True
 
+	def _veri_time(self, time_sect: pd.DataFrame) -> bool:
+		valid_timing = 0
+		
+		for _ in time_sect["On Time"]:
+			if _ in TIMING: valid_timing += 1
+		
+		if valid_timing != len(time_sect):
+			return False
+		return True
+	
 	def analyse(self, combined: pd.DataFrame) -> pd.DataFrame:
-		if not self._veri_streets(combined["Street"]):
+		if not self._veri_street(combined["Street"]):
 			log.critical("Street - Street elements do not match predefined street numbers")
 
-		self._veri_dates(combined["Date"])
-			# log.critical("Date - Dates are not incremented by one.")
+		if not self._veri_dates(combined["Date"]):
+			log.critical("Date - Dates are not incremented by one")
+
+		if not self._veri_time(combined):
+			log.critical("Time - Timing do not match duration values")
+
+
 def main():		
 	# Debug format: LINE NUMBER - DATAFRAME - DOING WHAT? - ANY VALUE CHANGES IN PROGRESS OR PASS/FAIL
 	log_init(log.DEBUG)
@@ -369,27 +421,29 @@ def main():
 
 	except:
 		status = Status.FAIL
-
 	else:
 		status = Status.PASS
 	debug_status("ALL - Cleaning and formatting data", status)
 
 	try:
 		date_corrected = get_first_date(date_clean)
-		time_converted = time_clean.map(convert_to_24_hours)	
-		generated_dates = add_structured_dates(street_clean, date_corrected)
+		generated_dates = add_structured_dates(street_clean, time_clean, date_corrected)
+
+		time_converted = time_clean.map(convert_to_24_hours)
+		time_duration_corrected = correct_duration(time_converted)
 	
-	except:
+		combined = merge_from_alignment(generated_dates, street_clean, time_duration_corrected)
+		
+	except ValueError as ve:
+		print(ve)
 		status = Status.FAIL
 	else:
 		status = Status.PASS
 	debug_status("ALL - Process date and time data for structured output using street and date information", status)
 
 	try:
-		combined = merge_from_alignment(generated_dates, street_clean, time_converted)
 		Verifying = VerifyData()
 		Verifying.analyse(combined)
-		print(combined.head(DEBUG_DF_LEN))
 
 	except ValueError as ve:
 		print(ve)
@@ -397,6 +451,8 @@ def main():
 	else:
 		status = Status.PASS
 	debug_status("ALL - Verifying every element of df via their required methods", status)
+	
+	print(combined.head(DEBUG_DF_LEN))
 	
 
 if __name__ == "__main__":
