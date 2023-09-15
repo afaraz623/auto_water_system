@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 import pandas as pd
 import tabula as tb
 import Levenshtein as lev
+import paho.mqtt.client as mqtt
 
 from logs import log_init, debug_status, log, Status
 
@@ -224,6 +225,27 @@ def merge_from_alignment(date: pd.DataFrame, street: pd.DataFrame, time: pd.Data
 	merged_df = pd.concat([date, merged_df], axis=1)
 	return merged_df
 
+def publish_dataframe(broker_ip, broker_port, topic, serialized_data):
+    def on_connect(client, userdata, flags, rc):
+        if rc == 0:
+            log.info(f'Connected to MQTT broker with result code: {str(rc)}')
+
+    try:
+        client = mqtt.Client('parser')
+        client.on_connect = on_connect
+        client.connect(broker_ip, broker_port, 60)
+
+        client.loop_start()
+        client.publish(topic, serialized_data, qos=0) 
+        client.disconnect()
+        client.loop_stop()
+
+        return True
+
+    except ValueError as ve:
+        log.error(f'Error Cause: {ve}')
+        return False
+
 # This class provides methods for cleaning and formatting data in a DataFrame. It is designed to handle data with specific formatting issues such as 
 # noise, carriage returns, double characters, and malformed dates, streets, and timings. The methods either remove the irrelevant data or mark malformed 
 # data for further processing. 
@@ -435,10 +457,10 @@ def loop():
 			thread.join()
 
 	except ValueError as ve:
-		log.error(f'Error caused during: {ve}')
+		log.error(f"Error Cause: {ve}")
 
 		os.remove(path)
-		log.info(f'{file_name} deleted!')
+		log.info(f"{file_name} deleted!")
 		
 		status = Status.FAIL
 	else:
@@ -451,7 +473,9 @@ def loop():
 		street_clean = Cleaning.clean_street(unprocs["street"])
 		time_clean = Cleaning.clean_time(unprocs["time"])
 
-	except:
+	except ValueError as ve:
+		log.error(f"Error Cause: {ve}")
+
 		status = Status.FAIL
 	else:
 		status = Status.PASS
@@ -467,7 +491,7 @@ def loop():
 		combined = merge_from_alignment(generated_dates, street_clean, time_duration_corrected)
 		
 	except ValueError as ve:
-		log.error(ve)
+		log.error(f"Error Cause: {ve}")
 		status = Status.FAIL
 	else:
 		status = Status.PASS
@@ -478,7 +502,8 @@ def loop():
 		Verifying.analyse(combined)
 
 	except ValueError as ve:
-		log.error(ve)
+		log.error(f"Error Cause: {ve}")
+
 		status = Status.FAIL
 	else:
 		status = Status.PASS
@@ -488,16 +513,23 @@ def loop():
 	filter_cols = ["Date", "On Time", "Duration"]
 	filtered = combined[filter_target][filter_cols].copy().reset_index(drop=True)
 
-	log.debug(f"\n{filtered.head(DEBUG_DF_LEN)}")
-
+	# log.debug(f"\n{filtered.head(DEBUG_DF_LEN)}")
 	# log.debug(f"\n{combined.head(DEBUG_DF_LEN)}")
 	# combined.to_csv(f"dumps/{file_name[:-4]}_dump.csv", encoding="utf-8")
+
+	serialized_data = pickle.dumps(filtered)
+
+	if publish_dataframe(BROKER_IP, BROKER_PORT, TOPIC, serialized_data):
+		log.info('published data successful')
+	else:
+		log.error('published data unsuccessful')
+
 	os.remove(path)
 	log.info(f'{file_name} deleted')
 
 def main():		
 	# Debug format: LINE NUMBER - DATAFRAME - DOING WHAT? - ANY VALUE CHANGES IN PROGRESS OR PASS/FAIL
-	log_init(log.DEBUG)
+	log_init(log.INFO)
 
 	log.info("parser started!")
 
