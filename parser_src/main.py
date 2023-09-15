@@ -119,63 +119,53 @@ def convert_to_24_hours(time_str: str) -> str:
 		return time_24h
 	return time_str
 
-
-# add_structured_dates help functions
+# add_structured_dates helper function
 def create_time_mask(time: pd.DataFrame) -> list:
 	time_format = "%Y-%m-%d %H:%M"
 	dummy_date = "1970-01-01"
-	temp = []
+	mask = []
+	prev_date = None
 
-	for _ in range(len(time)):
-		if re.match(r'^\d{2}:\d{2}$', time.at[_, "On Time"]):
-			if _ == 1:
-				prev_date = datetime.strptime(dummy_date + " " + time.at[1, "On Time"], time_format)
-				temp.append(False)
-				continue
+	for _, row in time.iterrows():
+		on_time = row["On Time"]
+		off_time = row["Off Time"]
 
-			curr_date = datetime.strptime(dummy_date + " " + time.at[_, "On Time"], time_format)
+		if re.match(r'^\d{2}:\d{2}$', on_time) and re.match(r'^\d{2}:\d{2}$', off_time):
+			on_datetime = datetime.strptime(dummy_date + " " + on_time, time_format)
+			off_datetime = datetime.strptime(dummy_date + " " + off_time, time_format)
 
-			if prev_date - curr_date > timedelta(hours=20): 
-				temp.append(True)
-		
-			prev_date = curr_date
+			if prev_date is not None and off_datetime < on_datetime:
+				mask.append(True)
+			else:
+				mask.append(False)
 
-		temp.append(False)
-	print(f"temp len: {len(temp)}, df len: {len(time)}")
-	df = pd.DataFrame(temp)
-	print(df.head(DEBUG_DF_LEN))	
-		
-		
+			prev_date = off_datetime
+		else:
+			mask.append(False)
 
-# This function generates a DataFrame of structured dates based on input DataFrames for streets and time, and a given correction date. 
-# It splits the streets into two groups, applies a day increment, and generates dates accordingly. Dates are incremented alternately for 
-# the two street groups, and the resulting dates are returned in a DataFrame.
+	log.debug(f"Time - making sure that mask and df len are the same - {len(mask)}, {len(time)}")	
+	return mask
+
 def add_structured_dates(street: pd.DataFrame, time: pd.DataFrame, corr_date: datetime) -> pd.DataFrame:
 	date = datetime.strptime(corr_date, '%d-%m-%Y')
 
-	mask = create_time_mask(time)
+	mask_midnight_cross = create_time_mask(time)
 
 	# spliting the STREETS list into two groups and masking them
 	mask_group_one = street.isin(STREETS[:7]).any(axis=1)
 	mask_group_two = street.isin(STREETS[7:]).any(axis=1)
 
-	day_incre = timedelta(days=1)
 	generated_dates = []
-	incre_date = False
 
-	for _ in range(len(street)):
-		if mask_group_one[_]:
-			if incre_date:
-				date += day_incre
-				incre_date = False
+	for i in range(len(street)):
+		if mask_group_one[i]:
 			generated_dates.append(date.strftime('%d-%m-%Y'))
 
-		elif mask_group_two[_]:
-			if not incre_date:
-				date += day_incre
-				incre_date = True
+		elif mask_group_two[i]:
 			generated_dates.append(date.strftime('%d-%m-%Y'))
 
+		if mask_midnight_cross[i]:
+			date += timedelta(days=1)  
 	return pd.DataFrame({"Date": generated_dates})
 
 # This function adjusts the "Duration" column in a DataFrame of date and time records. It computes the time difference between "On Time" 
@@ -390,12 +380,124 @@ class VerifyData:
 		if not self._veri_time(combined):
 			log.critical("Time - Timing do not match duration values")
 
+def loop():
+	try: 
+		unprocs = {}
+		file_name = None
+		while not any(filename.lower().endswith('.pdf') for filename in os.listdir(ATTACHMENT_PATH)):
+			time.sleep(LOOKUP_DELAY) 
+
+		for filename in os.listdir(ATTACHMENT_PATH):
+			if filename.lower().endswith('.pdf'):
+				file_name = filename
+			break
+
+		if file_name:
+			path = os.path.join(ATTACHMENT_PATH, f'{file_name}') 
+			log.info(f'{file_name} received')
+
+		# Ball park areas and column sizes for each dataframe
+		date_area_col   = ([40, 100, 920, 300], 1)
+		street_area_col = ([40, 220, 920, 360], 1)
+		timing_area_col = ([40, 275, 920, 830], 3)
+
+		date_thread = threading.Thread(target=lambda: unprocs.update({"date": tweak_area(extract_pdf(path, 
+													date_area_col[0]), 
+													path, 
+													"Date", 
+													date_area_col[0], 
+													date_area_col[1], 
+													expand_right=True)}))
+		
+		street_thread = threading.Thread(target=lambda: unprocs.update({"street": tweak_area(extract_pdf(path, 
+														street_area_col[0]), 
+														path, 
+														"Street", 
+														street_area_col[0], 
+														street_area_col[1], 
+														expand_right=True)}))
+		
+		timing_thread = threading.Thread(target=lambda: unprocs.update({"time": tweak_area(extract_pdf(path, 
+														timing_area_col[0]), 
+														path, 
+														"On Time;Duration", 
+														timing_area_col[0], 
+														timing_area_col[1], 
+														expand_right=True)}))
+		
+		date_thread.start()
+		street_thread.start()
+		timing_thread.start()
+
+		threads = [date_thread, street_thread, timing_thread]
+
+		for thread in threads:
+			thread.join()
+
+	except ValueError as ve:
+		log.error(f'Error caused during: {ve}')
+
+		os.remove(path)
+		log.info(f'{file_name} deleted!')
+		
+		status = Status.FAIL
+	else:
+		status = Status.PASS
+	debug_status("ALL - Tweaking area to extract correct data", status)
+
+	try:
+		Cleaning  = CleanData()
+		date_clean  = Cleaning.clean_date(unprocs["date"])
+		street_clean = Cleaning.clean_street(unprocs["street"])
+		time_clean = Cleaning.clean_time(unprocs["time"])
+
+	except:
+		status = Status.FAIL
+	else:
+		status = Status.PASS
+	debug_status("ALL - Cleaning and formatting data", status)
+
+	try:
+		time_converted = time_clean.map(convert_to_24_hours)
+		time_duration_corrected = correct_duration(time_converted)
+
+		date_corrected = get_first_date(date_clean)
+		generated_dates = add_structured_dates(street_clean, time_converted, date_corrected)
+
+		combined = merge_from_alignment(generated_dates, street_clean, time_duration_corrected)
+		
+	except ValueError as ve:
+		log.error(ve)
+		status = Status.FAIL
+	else:
+		status = Status.PASS
+	debug_status("ALL - Process date and time data for structured output using street and date information", status)
+
+	try:
+		Verifying = VerifyData()
+		Verifying.analyse(combined)
+
+	except ValueError as ve:
+		log.error(ve)
+		status = Status.FAIL
+	else:
+		status = Status.PASS
+	debug_status("ALL - Verifying every element of df via their required methods", status)
+	
+	filter_target = combined["Street"] == "5" # filtering useful data only
+	filter_cols = ["Date", "On Time", "Duration"]
+	filtered = combined[filter_target][filter_cols].copy().reset_index(drop=True)
+
+	log.debug(f"\n{filtered.head(DEBUG_DF_LEN)}")
+
+	# log.debug(f"\n{combined.head(DEBUG_DF_LEN)}")
+	# combined.to_csv(f"dumps/{file_name[:-4]}_dump.csv", encoding="utf-8")
+	os.remove(path)
+	log.info(f'{file_name} deleted')
 
 def main():		
 	# Debug format: LINE NUMBER - DATAFRAME - DOING WHAT? - ANY VALUE CHANGES IN PROGRESS OR PASS/FAIL
 	log_init(log.DEBUG)
-
-	unprocs = {}
 
 	log.info("parser started!")
 
@@ -403,118 +505,7 @@ def main():
 		os.makedirs(ATTACHMENT_PATH)
 
 	while True:
-		try: 
-			file_name = None
-			while not any(filename.lower().endswith('.pdf') for filename in os.listdir(ATTACHMENT_PATH)):
-				time.sleep(LOOKUP_DELAY) 
-
-			for filename in os.listdir(ATTACHMENT_PATH):
-				if filename.lower().endswith('.pdf'):
-					file_name = filename
-				break
-
-			if file_name:
-				path = os.path.join(ATTACHMENT_PATH, f'{file_name}') 
-				log.info(f'{file_name} received')
-
-			# Ball park areas and column sizes for each dataframe
-			date_area_col   = ([40, 100, 920, 300], 1)
-			street_area_col = ([40, 220, 920, 360], 1)
-			timing_area_col = ([40, 275, 920, 830], 3)
-
-			date_thread = threading.Thread(target=lambda: unprocs.update({"date": tweak_area(extract_pdf(path, 
-														date_area_col[0]), 
-														path, 
-														"Date", 
-														date_area_col[0], 
-														date_area_col[1], 
-														expand_right=True)}))
-			
-			street_thread = threading.Thread(target=lambda: unprocs.update({"street": tweak_area(extract_pdf(path, 
-															street_area_col[0]), 
-															path, 
-															"Street", 
-															street_area_col[0], 
-															street_area_col[1], 
-															expand_right=True)}))
-			
-			timing_thread = threading.Thread(target=lambda: unprocs.update({"time": tweak_area(extract_pdf(path, 
-															timing_area_col[0]), 
-															path, 
-															"On Time;Duration", 
-															timing_area_col[0], 
-															timing_area_col[1], 
-															expand_right=True)}))
-			
-			date_thread.start()
-			street_thread.start()
-			timing_thread.start()
-
-			threads = [date_thread, street_thread, timing_thread]
-
-			for thread in threads:
-				thread.join()
-
-		except ValueError as ve:
-			log.error(f'Error caused during: {ve}')
-
-			os.remove(path)
-			log.info(f'{file_name} deleted!')
-			
-			status = Status.FAIL
-		else:
-			status = Status.PASS
-		debug_status("ALL - Tweaking area to extract correct data", status)
-
-		try:
-			Cleaning  = CleanData()
-			date_clean  = Cleaning.clean_date(unprocs["date"])
-			street_clean = Cleaning.clean_street(unprocs["street"])
-			time_clean = Cleaning.clean_time(unprocs["time"])
-
-		except:
-			status = Status.FAIL
-		else:
-			status = Status.PASS
-		debug_status("ALL - Cleaning and formatting data", status)
-
-		try:
-			time_converted = time_clean.map(convert_to_24_hours)
-			time_duration_corrected = correct_duration(time_converted)
-
-			date_corrected = get_first_date(date_clean)
-			generated_dates = add_structured_dates(street_clean, time_converted, date_corrected)
-	
-			combined = merge_from_alignment(generated_dates, street_clean, time_duration_corrected)
-			
-		except ValueError as ve:
-			print(ve)
-			status = Status.FAIL
-		else:
-			status = Status.PASS
-		debug_status("ALL - Process date and time data for structured output using street and date information", status)
-
-		try:
-			Verifying = VerifyData()
-			Verifying.analyse(combined)
-
-		except ValueError as ve:
-			print(ve)
-			status = Status.FAIL
-		else:
-			status = Status.PASS
-		debug_status("ALL - Verifying every element of df via their required methods", status)
-		
-		# filter_target = combined["Street"] == "5" # filtering useful data only
-		# filter_cols = ["Date", "On Time", "Duration"]
-		# filtered = combined[filter_target][filter_cols].copy().reset_index(drop=True)
-
-		# log.debug(f"\n{filtered.head(DEBUG_DF_LEN)}")
-
-		log.debug(combined.head(DEBUG_DF_LEN))
-
-		# os.remove(path)
-		# log.info(f'{file_name} deleted')
+		loop()
 
 if __name__ == "__main__":
 	main()
